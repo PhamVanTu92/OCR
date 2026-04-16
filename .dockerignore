@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Frontend (not needed in backend image)
+frontend/
+
+# Dev / local
+.env
+*.log
+.DS_Store
+.git/
+.gitignore
+
+# Uploads (mounted as volume)
+uploads/
+
+# Docs
+*.md

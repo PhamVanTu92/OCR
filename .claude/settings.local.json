@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(ls /mnt/)",
+      "Read(//proc/**)",
+      "Bash(ls -la /e/Project/OCR/frontend/src/*.ts*)",
+      "Bash(python -m py_compile app/routers/roles.py app/routers/api_tokens.py app/routers/users.py app/services/role_seeder.py app/dependencies.py app/main.py)",
+      "Bash(python -m py_compile app/models/role.py app/models/api_token.py app/models/__init__.py)",
+      "Bash(python -m py_compile app/routers/users.py app/dependencies.py)",
+      "Bash(python -m py_compile app/routers/auth.py app/main.py)",
+      "Bash(node -e ':*)",
+      "Bash(npx vite:*)",
+      "Bash(cat E:/Project/OCR/scripts/*)"
+    ]
+  }
+}
