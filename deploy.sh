@@ -1,7 +1,10 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# deploy.sh  –  Deploy OCR Intelligent lên production (Ubuntu + Docker)
-# Sử dụng: bash deploy.sh [--no-cache]
+# deploy.sh  –  Build & deploy OCR Intelligent (production)
+#
+# Sử dụng:
+#   bash deploy.sh                  # build bình thường
+#   bash deploy.sh --no-cache       # build lại toàn bộ từ đầu
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -20,20 +23,24 @@ echo ""
 # ── Kiểm tra file .env ────────────────────────────────────────────────────────
 if [ ! -f ".env" ]; then
     echo "❌  Không tìm thấy file .env"
-    echo "    Hãy copy và chỉnh sửa: cp .env.example .env"
+    echo "    Hãy: cp .env.example .env && nano .env"
     exit 1
 fi
 
-# ── Pull code mới nhất ────────────────────────────────────────────────────────
-echo "📥  Pulling code mới nhất..."
-git pull origin main
+# ── Pull code mới nhất (bỏ qua nếu chạy lần đầu chưa có remote) ──────────────
+if git remote get-url origin &>/dev/null; then
+    echo "📥  Pulling code mới nhất..."
+    git pull origin main
+else
+    echo "ℹ️   Không có remote git – bỏ qua git pull"
+fi
 
 # ── Build images ──────────────────────────────────────────────────────────────
 echo ""
 echo "🔨  Building Docker images..."
 docker compose build $BUILD_FLAGS
 
-# ── Khởi động (zero-downtime swap) ───────────────────────────────────────────
+# ── Khởi động ─────────────────────────────────────────────────────────────────
 echo ""
 echo "🚀  Starting containers..."
 docker compose up -d --remove-orphans
@@ -41,14 +48,24 @@ docker compose up -d --remove-orphans
 # ── Chờ backend healthy ───────────────────────────────────────────────────────
 echo ""
 echo "⏳  Chờ backend khởi động..."
-for i in {1..30}; do
-    if docker compose exec -T backend curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-        echo "✅  Backend healthy!"
+HEALTHY=0
+for i in {1..40}; do
+    STATUS=$(docker inspect --format='{{.State.Health.Status}}' ocr_backend 2>/dev/null || echo "unknown")
+    if [ "$STATUS" = "healthy" ]; then
+        HEALTHY=1
         break
     fi
-    echo "   Thử lần $i/30..."
+    printf "   [%d/40] %s\r" "$i" "$STATUS"
     sleep 3
 done
+echo ""
+
+if [ "$HEALTHY" = "1" ]; then
+    echo "✅  Backend healthy!"
+else
+    echo "⚠️  Backend chưa healthy sau 2 phút – kiểm tra logs:"
+    echo "    docker compose logs backend"
+fi
 
 # ── Dọn images cũ ────────────────────────────────────────────────────────────
 echo ""
@@ -61,7 +78,8 @@ echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║             ✅  Deploy thành công!           ║"
 echo "╠══════════════════════════════════════════════╣"
-echo "║  🌐  http://${SERVER_IP}"
+echo "║  🌐  http://${SERVER_IP}:8019  (nội bộ)"
 echo "║  📋  Logs: docker compose logs -f"
+echo "║  🔍  Status: docker compose ps"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
