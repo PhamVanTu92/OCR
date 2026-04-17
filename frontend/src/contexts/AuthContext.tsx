@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { authApi } from '../api/auth'
+import { saveTokens } from '../api/client'
 import type { MeResponse } from '../types'
 
 interface AuthCtx {
@@ -23,6 +24,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401) {
         localStorage.removeItem('access_token')
+        localStorage.removeItem('access_token_expires_at')
         localStorage.removeItem('refresh_token')
         setUser(null)
       }
@@ -38,16 +40,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, password: string) => {
     const { data } = await authApi.login(username, password)
-    localStorage.setItem('access_token', data.access_token)
-    if (data.refresh_token) {
-      localStorage.setItem('refresh_token', data.refresh_token)
-    }
+    // Lưu token kèm expires_at để hỗ trợ proactive refresh
+    saveTokens(data.access_token, data.expires_in ?? 300, data.refresh_token)
     setLoading(true)
     fetchMe()
   }
 
   const logout = () => {
     localStorage.removeItem('access_token')
+    localStorage.removeItem('access_token_expires_at')
     localStorage.removeItem('refresh_token')
     setUser(null)
   }
