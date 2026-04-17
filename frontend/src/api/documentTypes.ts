@@ -6,6 +6,10 @@ export const docTypeApi = {
   listCategories: () => client.get<DocumentCategory[]>('/document-types/categories'),
   createCategory: (data: Partial<DocumentCategory>) =>
     client.post<DocumentCategory>('/document-types/categories', data),
+  updateCategory: (id: number, data: Partial<DocumentCategory>) =>
+    client.put<DocumentCategory>(`/document-types/categories/${id}`, data),
+  deleteCategory: (id: number) =>
+    client.delete(`/document-types/categories/${id}`),
 
   // Document Types – trailing slash để khớp route FastAPI @router.get("/")
   list: (category_id?: number) =>

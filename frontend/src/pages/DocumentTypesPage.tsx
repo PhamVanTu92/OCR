@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   Plus, Pencil, Trash2, FileText, Link2, X,
-  CheckCircle2, AlertCircle, Search,
+  CheckCircle2, AlertCircle, Search, FolderOpen, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { docTypeApi } from '../api/documentTypes'
 import { integrationApi } from '../api/integrations'
@@ -10,10 +10,139 @@ import DocTypeModal from '../components/DocType/DocTypeModal'
 import IntegrationConfigModal from '../components/Integration/IntegrationConfigModal'
 import Pagination from '../components/Pagination'
 
+// ── Category Modal ────────────────────────────────────────────────────────────
+interface CatModalProps {
+  open: boolean
+  editData: DocumentCategory | null
+  onClose: () => void
+  onSaved: () => void
+}
+
+function CategoryModal({ open, editData, onClose, onSaved }: CatModalProps) {
+  const [name,        setName]        = useState('')
+  const [code,        setCode]        = useState('')
+  const [description, setDescription] = useState('')
+  const [isActive,    setIsActive]    = useState(true)
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState('')
+
+  useEffect(() => {
+    if (open) {
+      setName(editData?.name ?? '')
+      setCode(editData?.code ?? '')
+      setDescription(editData?.description ?? '')
+      setIsActive(editData?.is_active ?? true)
+      setError('')
+    }
+  }, [open, editData])
+
+  if (!open) return null
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name.trim() || !code.trim()) { setError('Tên và mã không được để trống'); return }
+    setSaving(true); setError('')
+    try {
+      if (editData) {
+        await docTypeApi.updateCategory(editData.id, { name, code, description: description || null, is_active: isActive })
+      } else {
+        await docTypeApi.createCategory({ name, code, description: description || null, is_active: isActive })
+      }
+      onSaved()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Có lỗi xảy ra')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-base font-semibold text-gray-800">
+            {editData ? 'Chỉnh sửa nhóm chứng từ' : 'Thêm nhóm chứng từ'}
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          {error && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tên nhóm <span className="text-red-500">*</span>
+            </label>
+            <input
+              value={name} onChange={e => setName(e.target.value)}
+              placeholder="VD: Hóa đơn, Hợp đồng..."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Mã nhóm <span className="text-red-500">*</span>
+            </label>
+            <input
+              value={code} onChange={e => setCode(e.target.value.toUpperCase())}
+              placeholder="VD: INV, CONTRACT..."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">Chỉ chữ hoa, số và dấu gạch dưới</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mô tả</label>
+            <textarea
+              value={description} onChange={e => setDescription(e.target.value)}
+              rows={2} placeholder="Mô tả ngắn về nhóm chứng từ..."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="cat-active" checked={isActive}
+              onChange={e => setIsActive(e.target.checked)}
+              className="w-4 h-4 text-indigo-600 rounded" />
+            <label htmlFor="cat-active" className="text-sm text-gray-700">Kích hoạt</label>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
+              Huỷ
+            </button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700
+                disabled:opacity-60 flex items-center gap-1.5">
+              {saving ? 'Đang lưu...' : (editData ? 'Cập nhật' : 'Thêm mới')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function DocumentTypesPage() {
   const [categories, setCategories] = useState<DocumentCategory[]>([])
   const [docTypes,   setDocTypes]   = useState<DocumentType[]>([])
   const [loading,    setLoading]    = useState(true)
+
+  // Category panel
+  const [catPanelOpen, setCatPanelOpen] = useState(false)
+  const [catModalOpen, setCatModalOpen] = useState(false)
+  const [editCat,      setEditCat]      = useState<DocumentCategory | null>(null)
+  const [catError,     setCatError]     = useState('')
 
   // Doc type modal
   const [dtModalOpen, setDtModalOpen] = useState(false)
@@ -45,6 +174,27 @@ export default function DocumentTypesPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  // ── Category handlers ─────────────────────────────────────────────────────
+  const handleDeleteCat = async (cat: DocumentCategory) => {
+    const used = docTypes.filter(d => d.category_id === cat.id).length
+    if (used > 0) {
+      setCatError(`Nhóm "${cat.name}" đang có ${used} loại chứng từ, không thể xoá.`)
+      return
+    }
+    if (!confirm(`Xoá nhóm chứng từ "${cat.name}"?`)) return
+    setCatError('')
+    try {
+      await docTypeApi.deleteCategory(cat.id)
+      load()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setCatError(msg ?? 'Không thể xoá nhóm này')
+    }
+  }
+
+  const openCreateCat = () => { setEditCat(null); setCatModalOpen(true) }
+  const openEditCat   = (cat: DocumentCategory) => { setEditCat(cat); setCatModalOpen(true) }
 
   // Client-side filter
   const filtered = useMemo(() => {
@@ -112,6 +262,136 @@ export default function DocumentTypesPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold text-gray-800">Danh sách chứng từ OCR</h1>
+
+      {/* ── Category panel ───────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200">
+        {/* Header – click to toggle */}
+        <button
+          onClick={() => { setCatPanelOpen(v => !v); setCatError('') }}
+          className="w-full flex items-center justify-between px-5 py-4 border-b hover:bg-gray-50/60 transition-colors">
+          <div className="flex items-center gap-2 text-gray-700 font-semibold">
+            <FolderOpen size={18} className="text-indigo-500" />
+            Nhóm chứng từ
+            <span className="text-xs font-normal text-gray-400 ml-1">
+              ({categories.length} nhóm)
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            {!catPanelOpen && (
+              <div className="flex gap-1.5 flex-wrap max-w-lg">
+                {categories.slice(0, 6).map(c => (
+                  <span key={c.id}
+                    className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100
+                      px-2 py-0.5 rounded-full font-medium">
+                    {c.name}
+                  </span>
+                ))}
+                {categories.length > 6 && (
+                  <span className="text-xs text-gray-400">+{categories.length - 6}</span>
+                )}
+              </div>
+            )}
+            {catPanelOpen
+              ? <ChevronUp size={16} className="text-gray-400" />
+              : <ChevronDown size={16} className="text-gray-400" />}
+          </div>
+        </button>
+
+        {catPanelOpen && (
+          <div className="px-5 py-4">
+            {/* Error */}
+            {catError && (
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg
+                px-3 py-2 text-sm text-red-600 mb-3">
+                <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                <span>{catError}</span>
+                <button onClick={() => setCatError('')} className="ml-auto text-red-400 hover:text-red-600">
+                  <X size={13} />
+                </button>
+              </div>
+            )}
+
+            {/* Add button */}
+            <div className="flex justify-end mb-3">
+              <button onClick={openCreateCat} className="btn-primary">
+                <Plus size={15} /> Thêm nhóm
+              </button>
+            </div>
+
+            {/* Table */}
+            {loading ? (
+              <div className="text-center py-6 text-gray-400 text-sm">Đang tải...</div>
+            ) : categories.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-sm border border-dashed
+                border-gray-200 rounded-lg">
+                Chưa có nhóm chứng từ nào — nhấn <strong>Thêm nhóm</strong> để khai báo
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    {['STT', 'Tên nhóm', 'Mã', 'Mô tả', 'Số loại CT', 'Trạng thái', 'Thao tác'].map(h => (
+                      <th key={h} className="table-th">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {categories.map((cat, idx) => {
+                    const dtCount = docTypes.filter(d => d.category_id === cat.id).length
+                    return (
+                      <tr key={cat.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="table-td text-gray-400 w-10">{idx + 1}</td>
+                        <td className="table-td font-medium text-gray-800">{cat.name}</td>
+                        <td className="table-td">
+                          <code className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-mono">
+                            {cat.code}
+                          </code>
+                        </td>
+                        <td className="table-td text-gray-500 max-w-xs truncate">
+                          {cat.description ?? <span className="text-gray-300 italic">—</span>}
+                        </td>
+                        <td className="table-td text-center">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full
+                            ${dtCount > 0 ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-100 text-gray-400'}`}>
+                            {dtCount}
+                          </span>
+                        </td>
+                        <td className="table-td">
+                          {cat.is_active ? (
+                            <span className="flex items-center gap-1.5 text-sm text-green-600">
+                              <span className="w-2 h-2 rounded-full bg-green-500" /> Hoạt động
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5 text-sm text-gray-400">
+                              <span className="w-2 h-2 rounded-full bg-gray-300" /> Tắt
+                            </span>
+                          )}
+                        </td>
+                        <td className="table-td">
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => openEditCat(cat)}
+                              title="Chỉnh sửa"
+                              className="text-indigo-400 hover:text-indigo-600 transition-colors">
+                              <Pencil size={15} />
+                            </button>
+                            <button onClick={() => handleDeleteCat(cat)}
+                              title="Xoá nhóm"
+                              className="text-red-400 hover:text-red-600 transition-colors
+                                disabled:opacity-40"
+                              disabled={dtCount > 0}>
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* ── Doc types table ──────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200">
@@ -406,6 +686,13 @@ export default function DocumentTypesPage() {
       </div>
 
       {/* ── Modals ────────────────────────────────────────────────────── */}
+      <CategoryModal
+        open={catModalOpen}
+        editData={editCat}
+        onClose={() => setCatModalOpen(false)}
+        onSaved={() => { setCatModalOpen(false); load() }}
+      />
+
       <DocTypeModal
         open={dtModalOpen}
         editData={editItem}

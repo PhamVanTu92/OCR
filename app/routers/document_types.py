@@ -90,6 +90,30 @@ async def update_category(
     return cat
 
 
+@router.delete("/categories/{cat_id}", status_code=204, summary="Xoá nhóm chứng từ")
+async def delete_category(
+    cat_id: int,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(require_roles("admin", "doc_manager")),
+):
+    cat = db.query(DocumentCategory).filter(DocumentCategory.id == cat_id).first()
+    if not cat:
+        raise NotFoundError("Không tìm thấy nhóm chứng từ")
+    # Kiểm tra còn loại chứng từ thuộc nhóm này không
+    used = db.query(DocumentType).filter(
+        DocumentType.category_id == cat_id,
+        DocumentType.is_active == True,
+    ).count()
+    if used:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nhóm này đang có {used} loại chứng từ đang hoạt động, không thể xoá.",
+        )
+    db.delete(cat)
+    db.commit()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DOCUMENT TYPES
 # ═══════════════════════════════════════════════════════════════════════════════
