@@ -9,6 +9,7 @@ import OCRPage from './pages/OCRPage'
 import OCRDetailPage from './pages/OCRDetailPage'
 import UsersPage from './pages/UsersPage'
 import RolesPage from './pages/RolesPage'
+import PurchaseInvoicesPage from './pages/PurchaseInvoicesPage'
 
 const Spinner = () => (
   <div className="min-h-screen flex items-center justify-center">
@@ -62,6 +63,7 @@ export default function App() {
             <Route path="document-types" element={<DocumentTypesPage />} />
             <Route path="ocr"            element={<OCRPage />} />
             <Route path="ocr/documents/:id" element={<OCRDetailPage />} />
+            <Route path="purchase-invoices" element={<PurchaseInvoicesPage />} />
             <Route path="users"          element={<UsersPage />} />
             <Route path="roles"          element={<RolesPage />} />
           </Route>

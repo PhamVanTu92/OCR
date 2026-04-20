@@ -12,6 +12,7 @@ from .document import Document, DocumentResult
 from .integration import IntegrationConfig, IntegrationExportLog
 from .role import Permission, SystemRole, RolePermission, UserRole
 from .api_token import APIToken
+from .purchase_invoice import PurchaseInvoiceConfig
 
 __all__ = [
     "Base",
@@ -32,4 +33,5 @@ __all__ = [
     "RolePermission",
     "UserRole",
     "APIToken",
+    "PurchaseInvoiceConfig",
 ]

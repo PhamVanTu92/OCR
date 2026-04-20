@@ -243,3 +243,72 @@ export interface DocumentResult {
   edited_at: string | null
   created_at: string
 }
+
+// ─── Purchase Invoice (Hóa đơn đầu vào – Matbao) ─────────────────────────────
+
+export interface PurchaseInvoiceConfig {
+  id:               number
+  name:             string
+  matbao_base_url:  string
+  matbao_token:     string | null
+  tct_username:     string | null
+  tct_password:     string | null
+  is_active:        boolean
+  created_at:       string | null
+  updated_at:       string | null
+}
+
+export interface PurchaseInvoiceItem {
+  // Thông tin chung
+  THDon?:       string   // Tên hóa đơn
+  KHMSHDon?:   string   // Ký hiệu mẫu số
+  KHHDon?:     string   // Ký hiệu hóa đơn
+  SHDon?:      string | number  // Số hóa đơn
+  NLap?:       string   // Ngày lập
+  NKy?:        string   // Ngày ký
+  DVTTe?:      string   // Đơn vị tiền tệ
+  HTTToan?:    string   // Hình thức thanh toán
+  MCCQT?:      string   // Mã cơ quan thuế
+  // Người bán
+  NBanTen?:    string
+  NBanMST?:    string
+  NBanDChi?:   string
+  // Người mua
+  NMuaTen?:    string
+  NMuaMST?:    string
+  NMuaDChi?:   string
+  // Thanh toán
+  TgTCThue?:   number   // Tổng tiền chưa thuế
+  TgTThue?:    number   // Tổng tiền thuế
+  TgTTTBSo?:   number   // Tổng tiền thanh toán
+  // Trạng thái
+  TThai?:          number
+  TenTThai?:       string
+  LoaiHoaDon?:     number
+  TenLoaiHoaDon?:  string
+  // Links
+  LinkDownloadXML?: string
+  LinkDownloadPDF?: string
+  // Line items
+  DSHHDVu?: PurchaseInvoiceLineItem[]
+  // Kiểm tra
+  KTra?: Record<string, unknown>
+}
+
+export interface PurchaseInvoiceLineItem {
+  STT?:     number
+  MHHDVu?:  string
+  THHDVu?:  string
+  DVTinh?:  string
+  SLuong?:  number
+  DGia?:    number
+  ThTien?:  number
+  TSuat?:   string | number
+  TLCKhau?: number
+  STCKhau?: number
+}
+
+export interface CaptchaResponse {
+  key:     string
+  content: string   // SVG string
+}

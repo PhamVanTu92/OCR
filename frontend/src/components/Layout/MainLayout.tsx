@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Building2, FileText, ScanLine, LogOut,
   ChevronLeft, Menu, ChevronDown, ChevronRight, Folder,
-  Users, ShieldCheck,
+  Users, ShieldCheck, Receipt,
 } from 'lucide-react'
 import { docTypeApi } from '../../api/documentTypes'
 import type { DocumentCategory, DocumentType } from '../../types'
@@ -205,6 +205,9 @@ export default function MainLayout() {
             </div>
           )}
           {collapsed && <div className="my-1 border-t border-gray-100" />}
+
+          {/* Hóa đơn đầu vào */}
+          <SideNavLink to="/purchase-invoices" icon={<Receipt size={18} />} label="Hóa đơn đầu vào" collapsed={collapsed} />
 
           {/* Người dùng */}
           <SideNavLink to="/users" icon={<Users size={18} />} label="Người dùng" collapsed={collapsed} />
