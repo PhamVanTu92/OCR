@@ -2,12 +2,234 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   Users, Search, X, Shield, Building2,
   ToggleLeft, ToggleRight, Plus, Trash2, AlertCircle,
+  UserPlus, Eye, EyeOff, Loader2, CheckCircle2,
 } from 'lucide-react'
-import { usersApi } from '../api/users'
+import { usersApi, type UserCreateData } from '../api/users'
 import { rolesApi } from '../api/roles'
 import { orgApi } from '../api/organizations'
 import type { UserDetail, SystemRole, Organization } from '../types'
 import Pagination from '../components/Pagination'
+
+type Err = { response?: { data?: { detail?: string } } }
+
+// ── Create user modal ─────────────────────────────────────────────────────────
+function CreateUserModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: () => void
+}) {
+  const [form, setForm] = useState<UserCreateData>({
+    username: '', email: '', full_name: '', password: '', is_active: true,
+  })
+  const [showPwd, setShowPwd] = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState('')
+  const [success, setSuccess] = useState('')
+
+  const set = (k: keyof UserCreateData, v: string | boolean) =>
+    setForm(f => ({ ...f, [k]: v }))
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.username.trim() || !form.email.trim() || !form.password.trim()) {
+      setError('Vui lòng điền đầy đủ tên đăng nhập, email và mật khẩu')
+      return
+    }
+    setSaving(true); setError(''); setSuccess('')
+    try {
+      await usersApi.create(form)
+      setSuccess('Tạo tài khoản thành công!')
+      setTimeout(() => { onCreated(); onClose() }, 900)
+    } catch (e: unknown) {
+      setError((e as Err)?.response?.data?.detail ?? 'Tạo tài khoản thất bại')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div className="flex items-center gap-2">
+            <UserPlus size={18} className="text-indigo-500" />
+            <h2 className="font-semibold text-gray-800">Thêm người dùng</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+
+        {/* Body */}
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          {error && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+          {success && (
+            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
+              <CheckCircle2 size={14} />
+              <span>{success}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 sm:col-span-1">
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Tên đăng nhập <span className="text-red-500">*</span>
+              </label>
+              <input
+                value={form.username}
+                onChange={e => set('username', e.target.value.trim())}
+                placeholder="username"
+                autoComplete="off"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Họ và tên</label>
+              <input
+                value={form.full_name ?? ''}
+                onChange={e => set('full_name', e.target.value)}
+                placeholder="Nguyễn Văn A"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Email <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={e => set('email', e.target.value.trim())}
+              placeholder="user@example.com"
+              autoComplete="off"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Mật khẩu <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <input
+                type={showPwd ? 'text' : 'password'}
+                value={form.password}
+                onChange={e => set('password', e.target.value)}
+                placeholder="Tối thiểu 8 ký tự"
+                autoComplete="new-password"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <button type="button"
+                onClick={() => setShowPwd(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm text-gray-600">Kích hoạt tài khoản ngay</span>
+            <button type="button" onClick={() => set('is_active', !form.is_active)}>
+              {form.is_active
+                ? <ToggleRight size={28} className="text-green-500" />
+                : <ToggleLeft  size={28} className="text-gray-400" />}
+            </button>
+          </div>
+
+          {/* Footer */}
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
+              Huỷ
+            </button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving
+                ? <><Loader2 size={14} className="animate-spin" /> Đang tạo...</>
+                : <><UserPlus size={14} /> Tạo tài khoản</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Delete confirmation modal ─────────────────────────────────────────────────
+function DeleteConfirmModal({
+  user,
+  onClose,
+  onDeleted,
+}: {
+  user: UserDetail
+  onClose: () => void
+  onDeleted: () => void
+}) {
+  const [deleting, setDeleting] = useState(false)
+  const [error,    setError]    = useState('')
+
+  const handleDelete = async () => {
+    setDeleting(true); setError('')
+    try {
+      await usersApi.remove(user.id)
+      onDeleted()
+      onClose()
+    } catch (e: unknown) {
+      setError((e as Err)?.response?.data?.detail ?? 'Xoá thất bại')
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+            <Trash2 size={18} className="text-red-500" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-gray-800">Xoá người dùng</h3>
+            <p className="text-xs text-gray-400">Hành động này không thể hoàn tác</p>
+          </div>
+        </div>
+
+        <p className="text-sm text-gray-600 mb-1">
+          Bạn có chắc muốn xoá tài khoản{' '}
+          <strong className="text-gray-800">{user.full_name || user.username}</strong>?
+        </p>
+        <p className="text-xs text-gray-400 mb-4">
+          Email: {user.email} · Username: <span className="font-mono">{user.username}</span>
+        </p>
+
+        {error && (
+          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600 mb-3">
+            <AlertCircle size={13} className="mt-0.5 shrink-0" />{error}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose}
+            className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
+            Huỷ
+          </button>
+          <button onClick={handleDelete} disabled={deleting}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm bg-red-500 hover:bg-red-600
+              text-white rounded-lg disabled:opacity-50 transition-colors">
+            {deleting
+              ? <><Loader2 size={13} className="animate-spin" /> Đang xoá...</>
+              : <><Trash2 size={13} /> Xoá tài khoản</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 const ROLE_COLOR: Record<string, string> = {
@@ -289,7 +511,9 @@ export default function UsersPage() {
   const [page,         setPage]         = useState(1)
   const [pageSize,     setPageSize]     = useState(20)
 
-  const [selected, setSelected] = useState<UserDetail | null>(null)
+  const [selected,    setSelected]    = useState<UserDetail | null>(null)
+  const [showCreate,  setShowCreate]  = useState(false)
+  const [delTarget,   setDelTarget]   = useState<UserDetail | null>(null)
 
   const load = async () => {
     setLoading(true); setError('')
@@ -381,8 +605,17 @@ export default function UsersPage() {
           </select>
 
           {!loading && !error && (
-            <span className="ml-auto text-xs text-gray-400">{users.length} người dùng</span>
+            <span className="text-xs text-gray-400">{users.length} người dùng</span>
           )}
+
+          <button
+            onClick={() => setShowCreate(true)}
+            className="ml-auto flex items-center gap-1.5 px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-700
+              text-white rounded-lg transition-colors font-medium"
+          >
+            <UserPlus size={15} />
+            Thêm người dùng
+          </button>
         </div>
 
         {/* Error state */}
@@ -435,13 +668,23 @@ export default function UsersPage() {
                         </span>
                       </td>
                       <td className="table-td">
-                        <button
-                          onClick={() => setSelected(u)}
-                          className="text-xs text-indigo-500 hover:text-indigo-700 border border-indigo-200
-                            hover:border-indigo-400 rounded px-2 py-1 transition-colors"
-                        >
-                          Quản lý
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => setSelected(u)}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 border border-indigo-200
+                              hover:border-indigo-400 rounded px-2 py-1 transition-colors"
+                          >
+                            Quản lý
+                          </button>
+                          <button
+                            onClick={() => setDelTarget(u)}
+                            className="text-red-400 hover:text-red-600 border border-red-100 hover:border-red-300
+                              rounded p-1 transition-colors"
+                            title="Xoá người dùng"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -476,6 +719,21 @@ export default function UsersPage() {
           allOrgs={allOrgs}
           onClose={() => setSelected(null)}
           onRefresh={refreshSelected}
+        />
+      )}
+
+      {showCreate && (
+        <CreateUserModal
+          onClose={() => setShowCreate(false)}
+          onCreated={load}
+        />
+      )}
+
+      {delTarget && (
+        <DeleteConfirmModal
+          user={delTarget}
+          onClose={() => setDelTarget(null)}
+          onDeleted={() => { setDelTarget(null); load() }}
         />
       )}
     </div>

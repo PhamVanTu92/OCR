@@ -250,49 +250,76 @@ export interface PurchaseInvoiceConfig {
   id:               number
   name:             string
   matbao_base_url:  string
-  matbao_token:     string | null
-  tct_username:     string | null
-  tct_password:     string | null
+  matbao_api_key:   string | null
   is_active:        boolean
   created_at:       string | null
   updated_at:       string | null
 }
 
+export interface PurchaseInvoiceKTra {
+  TrangThai?:             string
+  NBanTen?:               string
+  NBanMST?:               string
+  NBanDChi?:              string
+  NMuaTen?:               string
+  NMuaMST?:               string
+  NMuaDChi?:              string
+  TgTCThue?:              string
+  TgTThue?:               string
+  TgTTTBSo?:              string
+  TTCKTMai?:              string
+  NBanTrangThaiHDMST?:    boolean
+  NBanNDTrangThaiHDMST?:  string
+  NMuaTrangThaiHDMST?:    boolean
+  NMuaNDTrangThaiHDMST?:  string
+  ChuKyMST?:              string
+  ChuKyHieuLuc?:          string
+}
+
 export interface PurchaseInvoiceItem {
+  // Định danh
+  InvID?:        string
+  TctID?:        string
   // Thông tin chung
-  THDon?:       string   // Tên hóa đơn
-  KHMSHDon?:   string   // Ký hiệu mẫu số
-  KHHDon?:     string   // Ký hiệu hóa đơn
-  SHDon?:      string | number  // Số hóa đơn
-  NLap?:       string   // Ngày lập
-  NKy?:        string   // Ngày ký
-  DVTTe?:      string   // Đơn vị tiền tệ
-  HTTToan?:    string   // Hình thức thanh toán
-  MCCQT?:      string   // Mã cơ quan thuế
+  THDon?:        string
+  KHMSHDon?:     string
+  KHHDon?:       string
+  SHDon?:        string | number
+  NLap?:         string
+  NKy?:          string
+  DVTTe?:        string
+  HTTToan?:      string
+  MCCQT?:        string
   // Người bán
-  NBanTen?:    string
-  NBanMST?:    string
-  NBanDChi?:   string
+  NBanTen?:      string
+  NBanMST?:      string
+  NBanDChi?:     string
+  NBanSDT?:      string
   // Người mua
-  NMuaTen?:    string
-  NMuaMST?:    string
-  NMuaDChi?:   string
+  NMuaTen?:      string
+  NMuaMST?:      string
+  NMuaDChi?:     string
   // Thanh toán
-  TgTCThue?:   number   // Tổng tiền chưa thuế
-  TgTThue?:    number   // Tổng tiền thuế
-  TgTTTBSo?:   number   // Tổng tiền thanh toán
+  TgTCThue?:     number
+  TgTThue?:      number
+  TgTTTBSo?:     number
+  TgTTTBChu?:    string
+  TTCKTMai?:     number
   // Trạng thái
-  TThai?:          number
-  TenTThai?:       string
-  LoaiHoaDon?:     number
-  TenLoaiHoaDon?:  string
+  TThai?:            number   // 0=hợp lệ, 1=không hợp lệ, 2=trùng
+  TenTThai?:         string
+  TrangThaiHD?:      string
+  KQPhanTich?:       string
+  KQKiemTraHDon?:    string
+  NguonUpload?:      string
+  NgayImport?:       string
+  // Kiểm tra hợp lệ
+  KTra?:         PurchaseInvoiceKTra
   // Links
   LinkDownloadXML?: string
   LinkDownloadPDF?: string
-  // Line items
+  // Dòng hàng hóa
   DSHHDVu?: PurchaseInvoiceLineItem[]
-  // Kiểm tra
-  KTra?: Record<string, unknown>
 }
 
 export interface PurchaseInvoiceLineItem {
@@ -308,7 +335,3 @@ export interface PurchaseInvoiceLineItem {
   STCKhau?: number
 }
 
-export interface CaptchaResponse {
-  key:     string
-  content: string   // SVG string
-}

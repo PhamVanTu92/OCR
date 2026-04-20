@@ -1,654 +1,703 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   Settings, RefreshCw, Search, X, Download, Eye,
   ChevronDown, ChevronUp, AlertCircle, CheckCircle2,
   FileText, Receipt, ExternalLink, Loader2, KeyRound,
-  ShieldCheck,
+  BadgeCheck, BadgeX, Building2, User, CalendarRange,
+  Hash, SlidersHorizontal,
 } from 'lucide-react'
 import { purchaseInvoiceApi, type InvoiceListParams } from '../api/purchaseInvoices'
-import type {
-  PurchaseInvoiceConfig, PurchaseInvoiceItem, PurchaseInvoiceLineItem, CaptchaResponse,
-} from '../types'
+import type { PurchaseInvoiceConfig, PurchaseInvoiceItem, PurchaseInvoiceLineItem } from '../types'
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
-const fmt = (n?: number) =>
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
+/** yyyy-MM-dd  →  dd/MM/yyyy */
+function fmtDate(d?: string | null): string {
+  if (!d) return '—'
+  // ISO: 2026-03-01  hoặc  2026-03-01T15:23:06
+  const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`
+  // dd/MM/yyyy đã đúng
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(d)) return d.slice(0, 10)
+  return d
+}
+
+/** yyyy-MM-dd  →  dd/MM/yyyy (cho display ngày tháng dạng dài) */
+function fmtDateTime(d?: string | null): string {
+  if (!d) return '—'
+  const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]} ${iso[4]}:${iso[5]}`
+  return fmtDate(d)
+}
+
+// ─── Money / Status helpers ───────────────────────────────────────────────────
+
+const fmtMoney = (n?: number | null) =>
   n != null ? n.toLocaleString('vi-VN') : '—'
 
 const statusLabel = (code?: number) => {
-  if (code === 0) return { text: 'Hợp lệ',    cls: 'bg-green-100 text-green-700' }
-  if (code === 1) return { text: 'Không hợp lệ', cls: 'bg-red-100 text-red-600' }
-  if (code === 2) return { text: 'Trùng',      cls: 'bg-yellow-100 text-yellow-700' }
-  return { text: 'Tất cả', cls: 'bg-gray-100 text-gray-500' }
+  if (code === 0) return { text: 'Hợp lệ',       cls: 'bg-green-100  text-green-700  border-green-200'  }
+  if (code === 1) return { text: 'Không hợp lệ', cls: 'bg-red-100    text-red-600    border-red-200'    }
+  if (code === 2) return { text: 'Trùng',         cls: 'bg-yellow-100 text-yellow-700 border-yellow-200' }
+  if (code === 3) return { text: 'Có sai sót',    cls: 'bg-orange-100 text-orange-600 border-orange-200' }
+  return           { text: '—',                   cls: 'bg-gray-100   text-gray-500   border-gray-200'  }
 }
 
-// ─── Setting panel ────────────────────────────────────────────────────────────
-function SettingsPanel({ onSaved }: { onSaved: () => void }) {
-  const [open,       setOpen]       = useState(false)
-  const [cfg,        setCfg]        = useState<PurchaseInvoiceConfig | null>(null)
-  const [saving,     setSaving]     = useState(false)
-  const [error,      setError]      = useState('')
-  const [success,    setSuccess]    = useState('')
+// ─── Input helpers ────────────────────────────────────────────────────────────
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs text-gray-500 mb-1">{label}</label>
+      {children}
+    </div>
+  )
+}
 
-  // TCT login tab
-  const [tctTab,     setTctTab]     = useState<'token'|'tct'>('token')
-  const [captcha,    setCaptcha]    = useState<CaptchaResponse | null>(null)
-  const [captchaVal, setCaptchaVal] = useState('')
-  const [tctUser,    setTctUser]    = useState('')
-  const [tctPass,    setTctPass]    = useState('')
-  const [tctLoading, setTctLoading] = useState(false)
+const inputCls = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white'
+
+// ─── Settings panel ───────────────────────────────────────────────────────────
+function SettingsPanel({ onSaved }: { onSaved: () => void }) {
+  const [open,      setOpen]      = useState(false)
+  const [cfg,       setCfg]       = useState<PurchaseInvoiceConfig | null>(null)
+  const [saving,    setSaving]    = useState(false)
+  const [testing,   setTesting]   = useState(false)
+  const [error,     setError]     = useState('')
+  const [success,   setSuccess]   = useState('')
+  const [tokenInfo, setTokenInfo] = useState('')
 
   useEffect(() => {
-    purchaseInvoiceApi.getConfig().then(r => {
-      setCfg(r.data)
-      setTctUser(r.data.tct_username ?? '')
-      setTctPass(r.data.tct_password ?? '')
-    })
+    purchaseInvoiceApi.getConfig().then(r => setCfg(r.data))
   }, [])
 
-  const loadCaptcha = async () => {
-    setTctLoading(true)
-    try {
-      const r = await purchaseInvoiceApi.getCaptcha()
-      setCaptcha(r.data)
-      setCaptchaVal('')
-    } catch { setError('Không lấy được captcha') }
-    finally { setTctLoading(false) }
-  }
-
-  const handleSaveToken = async () => {
+  const handleSave = async () => {
     if (!cfg) return
-    setSaving(true); setError(''); setSuccess('')
+    setSaving(true); setError(''); setSuccess(''); setTokenInfo('')
     try {
       await purchaseInvoiceApi.updateConfig({
         name:            cfg.name,
         matbao_base_url: cfg.matbao_base_url,
-        matbao_token:    cfg.matbao_token ?? undefined,
+        matbao_api_key:  cfg.matbao_api_key ?? undefined,
       })
       setSuccess('Đã lưu cấu hình!')
       onSaved()
     } catch (e: unknown) {
-      setError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Lỗi lưu')
+      setError((e as Err)?.response?.data?.detail ?? 'Lỗi lưu cấu hình')
     } finally { setSaving(false) }
   }
 
-  const handleLoginTCT = async () => {
-    if (!captcha || !captchaVal.trim()) { setError('Nhập mã captcha'); return }
-    setTctLoading(true); setError(''); setSuccess('')
+  const handleTestToken = async () => {
+    setTesting(true); setError(''); setSuccess(''); setTokenInfo('')
     try {
-      await purchaseInvoiceApi.loginTCT({
-        username: tctUser, password: tctPass,
-        cvalue: captchaVal, ckey: captcha.key,
-      })
-      setSuccess('Đăng nhập TCT thành công!')
-      setCaptcha(null)
+      const r = await purchaseInvoiceApi.testToken()
+      setSuccess(r.data.message)
+      setTokenInfo(
+        `Preview: ${r.data.token_preview} · Hết hạn sau ${Math.floor(r.data.expires_in_seconds / 60)} phút`
+      )
     } catch (e: unknown) {
-      setError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Đăng nhập thất bại')
-    } finally { setTctLoading(false) }
+      setError((e as Err)?.response?.data?.detail ?? 'API key không hợp lệ')
+    } finally { setTesting(false) }
   }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50/60 transition-colors">
-        <div className="flex items-center gap-2 font-semibold text-gray-700">
-          <Settings size={18} className="text-indigo-500" />
-          Thiết lập kết nối Matbao API
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50/60 transition-colors">
+        <div className="flex items-center gap-2 font-semibold text-gray-700 text-sm">
+          <Settings size={16} className="text-indigo-500" />
+          Thiết lập kết nối API
+          {cfg?.matbao_api_key && (
+            <span className="text-xs font-normal text-green-600 flex items-center gap-1">
+              <CheckCircle2 size={11} /> Đã cấu hình
+            </span>
+          )}
         </div>
-        {open ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+        {open ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
       </button>
 
       {open && cfg && (
-        <div className="px-5 pb-5 border-t">
-          {/* Tabs */}
-          <div className="flex gap-1 mt-4 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
-            {(['token', 'tct'] as const).map(tab => (
-              <button key={tab} onClick={() => setTctTab(tab)}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors
-                  ${tctTab === tab ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}>
-                {tab === 'token' ? (
-                  <span className="flex items-center gap-1.5"><KeyRound size={14} /> Cấu hình API Token</span>
-                ) : (
-                  <span className="flex items-center gap-1.5"><ShieldCheck size={14} /> Đăng nhập TCT</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Alerts */}
+        <div className="px-5 pb-5 border-t space-y-4 pt-4">
           {error && (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600 mb-3">
-              <AlertCircle size={15} className="mt-0.5 shrink-0" /><span>{error}</span>
-              <button onClick={() => setError('')} className="ml-auto"><X size={13} /></button>
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <span className="flex-1">{error}</span>
+              <button onClick={() => setError('')}><X size={12} /></button>
             </div>
           )}
           {success && (
-            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700 mb-3">
-              <CheckCircle2 size={15} /><span>{success}</span>
-              <button onClick={() => setSuccess('')} className="ml-auto"><X size={13} /></button>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
+                <CheckCircle2 size={14} />
+                <span className="flex-1">{success}</span>
+                <button onClick={() => setSuccess('')}><X size={12} /></button>
+              </div>
+              {tokenInfo && <p className="text-xs text-gray-400 font-mono px-1">{tokenInfo}</p>}
             </div>
           )}
 
-          {/* Token tab */}
-          {tctTab === 'token' && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tên cấu hình</label>
-                  <input value={cfg.name}
-                    onChange={e => setCfg({...cfg, name: e.target.value})}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Base URL API</label>
-                  <input value={cfg.matbao_base_url}
-                    onChange={e => setCfg({...cfg, matbao_base_url: e.target.value})}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Matbao API Token <span className="text-red-500">*</span>
-                </label>
-                <input type="password"
-                  value={cfg.matbao_token ?? ''}
-                  onChange={e => setCfg({...cfg, matbao_token: e.target.value})}
-                  placeholder="Nhập token Matbao..."
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                <p className="text-xs text-gray-400 mt-1">
-                  Lấy token tại trang quản trị Matbao: Quản lý hóa đơn → Quản lý hóa đơn đầu vào → Tạo mới
-                </p>
-              </div>
-              <div className="flex justify-end">
-                <button onClick={handleSaveToken} disabled={saving}
-                  className="btn-primary">
-                  {saving ? <><Loader2 size={14} className="animate-spin" /> Đang lưu...</> : 'Lưu cấu hình'}
-                </button>
-              </div>
-            </div>
-          )}
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Tên cấu hình">
+              <input value={cfg.name} onChange={e => setCfg({ ...cfg, name: e.target.value })}
+                className={inputCls} />
+            </Field>
+            <Field label="Base URL API">
+              <input value={cfg.matbao_base_url}
+                onChange={e => setCfg({ ...cfg, matbao_base_url: e.target.value })}
+                className={`${inputCls} font-mono text-xs`} />
+            </Field>
+          </div>
 
-          {/* TCT tab */}
-          {tctTab === 'tct' && (
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">
-                Đăng nhập bằng tài khoản <strong>hoadondientu.gdt.gov.vn</strong> để đồng bộ hóa đơn từ Tổng cục Thuế.
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tên đăng nhập (MST)</label>
-                  <input value={tctUser} onChange={e => setTctUser(e.target.value)}
-                    placeholder="Mã số thuế..."
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
-                  <input type="password" value={tctPass} onChange={e => setTctPass(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-              </div>
+          <Field label={
+            <span className="flex items-center gap-1.5">
+              <KeyRound size={12} className="text-indigo-400" />
+              API Key (UUID) <span className="text-red-500">*</span>
+            </span> as unknown as string
+          }>
+            <input type="password"
+              value={cfg.matbao_api_key ?? ''}
+              onChange={e => setCfg({ ...cfg, matbao_api_key: e.target.value })}
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              className={`${inputCls} font-mono`} />
+            <p className="text-xs text-gray-400 mt-1">
+              Lấy tại trang quản trị hóa đơn đầu vào → API Key
+            </p>
+          </Field>
 
-              {/* Captcha */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mã captcha</label>
-                <div className="flex items-center gap-3">
-                  {captcha ? (
-                    <div className="border border-gray-200 rounded-lg p-2 bg-white"
-                      dangerouslySetInnerHTML={{ __html: captcha.content }} />
-                  ) : (
-                    <div className="w-32 h-12 border border-dashed border-gray-300 rounded-lg flex items-center justify-center text-xs text-gray-400">
-                      Chưa tải
-                    </div>
-                  )}
-                  <button onClick={loadCaptcha} disabled={tctLoading}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600">
-                    <RefreshCw size={13} className={tctLoading ? 'animate-spin' : ''} />
-                    {captcha ? 'Tải lại' : 'Tải captcha'}
-                  </button>
-                  <input value={captchaVal} onChange={e => setCaptchaVal(e.target.value)}
-                    placeholder="Nhập captcha..."
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <button onClick={handleLoginTCT} disabled={tctLoading || !captcha}
-                  className="btn-primary">
-                  {tctLoading ? <><Loader2 size={14} className="animate-spin" /> Đang đăng nhập...</> : 'Đăng nhập TCT'}
-                </button>
-              </div>
-            </div>
-          )}
+          <div className="flex justify-end gap-2">
+            <button onClick={handleTestToken} disabled={testing || !cfg.matbao_api_key}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm border border-indigo-200 text-indigo-600
+                rounded-lg hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              {testing
+                ? <><Loader2 size={13} className="animate-spin" /> Đang kiểm tra...</>
+                : <><RefreshCw size={13} /> Kiểm tra API Key</>}
+            </button>
+            <button onClick={handleSave} disabled={saving} className="btn-primary">
+              {saving ? <><Loader2 size={13} className="animate-spin" /> Đang lưu...</> : 'Lưu cấu hình'}
+            </button>
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-// ─── Detail drawer ────────────────────────────────────────────────────────────
-function InvoiceDetailDrawer({
-  invoice, onClose,
-}: {
-  invoice: PurchaseInvoiceItem
-  onClose: () => void
-}) {
-  const [detail,  setDetail]  = useState<PurchaseInvoiceItem | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (invoice.LinkDownloadXML) {
-      setLoading(true)
-      purchaseInvoiceApi.detailByUrl(invoice.LinkDownloadXML, 0)
-        .then(r => setDetail(r.data))
-        .catch(() => setDetail(invoice))
-        .finally(() => setLoading(false))
-    } else {
-      setDetail(invoice)
-    }
-  }, [invoice])
-
-  const inv = detail ?? invoice
-  const lines: PurchaseInvoiceLineItem[] = inv.DSHHDVu ?? []
+// ─── KTra check row ───────────────────────────────────────────────────────────
+function KTraRow({ label, value }: { label: string; value?: string | boolean | null }) {
+  if (value == null || value === '') return null
+  const text = typeof value === 'boolean' ? (value ? 'Hợp lệ' : 'Không hợp lệ') : String(value)
+  const isGood = typeof value === 'boolean' ? value
+    : /trùng|hợp lệ|không có|đã được cấp/i.test(text) && !/không hợp lệ|chênh lệch/i.test(text)
+  const isBad = typeof value === 'boolean' ? !value
+    : /không hợp lệ|chênh lệch/i.test(text)
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-sm"
-      onClick={onClose}>
-      <div className="bg-white w-full max-w-2xl h-full overflow-y-auto shadow-2xl"
-        onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
-          <div>
-            <div className="flex items-center gap-2">
-              <Receipt size={18} className="text-indigo-500" />
-              <h2 className="font-semibold text-gray-800">Chi tiết hóa đơn</h2>
+    <div className="flex items-start justify-between gap-4 py-1.5 border-b border-gray-100 last:border-0">
+      <span className="text-xs text-gray-500 shrink-0">{label}</span>
+      <span className={`text-xs text-right font-medium ${isBad ? 'text-red-500' : isGood ? 'text-green-600' : 'text-gray-700'}`}>
+        {typeof value === 'boolean' ? (value ? '✓ Hợp lệ' : '✗ Không hợp lệ') : text}
+      </span>
+    </div>
+  )
+}
+
+// ─── Detail drawer ────────────────────────────────────────────────────────────
+function InvoiceDetailDrawer({ invoice, onClose }: { invoice: PurchaseInvoiceItem; onClose: () => void }) {
+  const inv   = invoice
+  const lines: PurchaseInvoiceLineItem[] = inv.DSHHDVu ?? []
+  const ktra  = inv.KTra
+  const st    = statusLabel(inv.TThai)
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white w-full max-w-2xl h-full flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <div className="shrink-0 border-b px-6 py-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Receipt size={16} className="text-indigo-500 shrink-0" />
+              <h2 className="font-semibold text-gray-800 text-sm leading-tight">
+                {inv.THDon ?? 'Chi tiết hóa đơn'}
+              </h2>
               {inv.KHMSHDon && (
-                <code className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-mono">
+                <code className="text-[11px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-mono">
                   {inv.KHMSHDon}{inv.KHHDon}
                 </code>
               )}
+              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${st.cls}`}>
+                {inv.TenTThai || st.text}
+              </span>
             </div>
-            <p className="text-xs text-gray-400 mt-0.5">Số: {inv.SHDon ?? '—'} · Ngày lập: {inv.NLap ?? '—'}</p>
+            <p className="text-xs text-gray-400 mt-1">
+              Số HĐ: <strong className="text-gray-600">#{inv.SHDon ?? '—'}</strong>
+              {' · '}Ngày lập: <strong className="text-gray-600">{fmtDate(inv.NLap)}</strong>
+              {inv.NKy ? <> · Ký: {fmtDate(inv.NKy)}</> : null}
+              {inv.HTTToan ? <> · {inv.HTTToan}</> : null}
+            </p>
+            {inv.MCCQT && (
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Mã CQT: <span className="font-mono">{inv.MCCQT}</span>
+              </p>
+            )}
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={20} /></button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 shrink-0">
+            <X size={18} />
+          </button>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center h-48 text-gray-400 gap-2">
-            <Loader2 size={18} className="animate-spin" /> Đang tải chi tiết...
-          </div>
-        ) : (
-          <div className="px-6 py-4 space-y-5">
-            {/* Status */}
-            {inv.TThai != null && (
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusLabel(inv.TThai).cls}`}>
-                  {inv.TenTThai ?? statusLabel(inv.TThai).text}
+        {/* ── Body (scrollable) ──────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+
+          {/* Badges trạng thái */}
+          {(inv.TrangThaiHD || inv.KQPhanTich || inv.NguonUpload || inv.NgayImport) && (
+            <div className="flex flex-wrap gap-2 items-center">
+              {inv.TrangThaiHD && (
+                <span className="text-[11px] bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1 rounded-full font-medium">
+                  {inv.TrangThaiHD}
                 </span>
-                {inv.TenLoaiHoaDon && (
-                  <span className="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full font-medium">
-                    {inv.TenLoaiHoaDon}
-                  </span>
+              )}
+              {inv.KQPhanTich && (
+                <span className={`text-[11px] border px-2.5 py-1 rounded-full font-medium
+                  ${/hợp lệ/i.test(inv.KQPhanTich)
+                    ? 'bg-green-50 text-green-700 border-green-100'
+                    : 'bg-yellow-50 text-yellow-700 border-yellow-100'}`}>
+                  {inv.KQPhanTich}
+                </span>
+              )}
+              {inv.NguonUpload && (
+                <span className="text-[11px] bg-gray-100 text-gray-500 px-2.5 py-1 rounded-full">
+                  Nguồn: {inv.NguonUpload}
+                </span>
+              )}
+              {inv.NgayImport && (
+                <span className="text-[11px] text-gray-400">
+                  Nhập: {fmtDateTime(inv.NgayImport)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Người bán + Người mua */}
+          <div className="grid grid-cols-2 gap-3">
+            <section>
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+                <Building2 size={11} className="text-indigo-400" /> Người bán
+              </h3>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs">
+                <p className="font-semibold text-gray-800 leading-snug">{inv.NBanTen ?? '—'}</p>
+                {inv.NBanMST  && <p className="font-mono text-indigo-600">{inv.NBanMST}</p>}
+                {inv.NBanDChi && <p className="text-gray-500 leading-snug">{inv.NBanDChi}</p>}
+                {inv.NBanSDT  && <p className="text-gray-500">📞 {inv.NBanSDT}</p>}
+              </div>
+            </section>
+            <section>
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+                <User size={11} className="text-indigo-400" /> Người mua
+              </h3>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs">
+                <p className="font-semibold text-gray-800 leading-snug">{inv.NMuaTen ?? '—'}</p>
+                {inv.NMuaMST  && <p className="font-mono text-indigo-600">{inv.NMuaMST}</p>}
+                {inv.NMuaDChi && <p className="text-gray-500 leading-snug">{inv.NMuaDChi}</p>}
+              </div>
+            </section>
+          </div>
+
+          {/* Thanh toán */}
+          <section>
+            <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Thanh toán</h3>
+            <div className="bg-indigo-50 rounded-lg p-3 space-y-1.5 text-sm">
+              <Row label="Tiền chưa thuế"   value={`${fmtMoney(inv.TgTCThue)} đ`} />
+              <Row label="Tiền thuế GTGT"   value={`${fmtMoney(inv.TgTThue)} đ`} />
+              {inv.TTCKTMai != null && inv.TTCKTMai !== 0 && (
+                <Row label="Chiết khấu TM" value={`-${fmtMoney(inv.TTCKTMai)} đ`} cls="text-orange-600" />
+              )}
+              <div className="flex justify-between border-t border-indigo-100 pt-1.5">
+                <span className="font-semibold text-gray-700">Tổng thanh toán</span>
+                <span className="font-bold text-indigo-700 text-base">{fmtMoney(inv.TgTTTBSo)} đ</span>
+              </div>
+              {inv.TgTTTBChu && (
+                <p className="text-xs text-gray-400 italic">({inv.TgTTTBChu})</p>
+              )}
+              {inv.DVTTe && <p className="text-xs text-gray-500">Đơn vị: {inv.DVTTe}</p>}
+            </div>
+          </section>
+
+          {/* Hàng hóa */}
+          {lines.length > 0 && (
+            <section>
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                Hàng hóa / Dịch vụ
+                <span className="ml-1 text-indigo-500">({lines.length} dòng)</span>
+              </h3>
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 text-gray-500 font-medium">
+                    <tr>
+                      <th className="px-3 py-2 text-center w-8">STT</th>
+                      <th className="px-3 py-2 text-left">Tên hàng hóa / Dịch vụ</th>
+                      <th className="px-3 py-2 text-center">ĐVT</th>
+                      <th className="px-3 py-2 text-right">SL</th>
+                      <th className="px-3 py-2 text-right">Đơn giá</th>
+                      <th className="px-3 py-2 text-right">Thành tiền</th>
+                      <th className="px-3 py-2 text-right">Thuế</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {lines.map((l, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 text-gray-400 text-center">{l.STT ?? i + 1}</td>
+                        <td className="px-3 py-2 text-gray-800 max-w-[220px]">
+                          {l.MHHDVu && (
+                            <span className="text-[10px] text-indigo-400 font-mono mr-1">[{l.MHHDVu}]</span>
+                          )}
+                          <span className="leading-snug">{l.THHDVu}</span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-500 text-center">{l.DVTinh ?? '—'}</td>
+                        <td className="px-3 py-2 text-right">{l.SLuong ?? '—'}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{fmtMoney(l.DGia)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-gray-800">{fmtMoney(l.ThTien)}</td>
+                        <td className="px-3 py-2 text-right text-indigo-600 font-medium">
+                          {l.TSuat != null ? String(l.TSuat) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* KTra */}
+          {ktra && (
+            <section>
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+                {inv.TThai === 0
+                  ? <BadgeCheck size={12} className="text-green-500" />
+                  : <BadgeX size={12} className="text-red-400" />}
+                Kết quả kiểm tra hợp lệ (CQT)
+              </h3>
+              <div className="bg-gray-50 rounded-lg px-3 py-1 text-xs">
+                <KTraRow label="Trạng thái tổng thể"       value={ktra.TrangThai} />
+                <KTraRow label="Tên người bán"             value={ktra.NBanTen} />
+                <KTraRow label="MST người bán"             value={ktra.NBanMST} />
+                <KTraRow label="Địa chỉ người bán"         value={ktra.NBanDChi} />
+                <KTraRow label="Tình trạng NNT (bên bán)"  value={ktra.NBanNDTrangThaiHDMST} />
+                <KTraRow label="Tên người mua"             value={ktra.NMuaTen} />
+                <KTraRow label="MST người mua"             value={ktra.NMuaMST} />
+                <KTraRow label="Địa chỉ người mua"         value={ktra.NMuaDChi} />
+                <KTraRow label="Tình trạng NNT (bên mua)"  value={ktra.NMuaNDTrangThaiHDMST} />
+                <KTraRow label="Tổng tiền chưa thuế"        value={ktra.TgTCThue} />
+                <KTraRow label="Tổng tiền thuế"             value={ktra.TgTThue} />
+                <KTraRow label="Tổng tiền thanh toán"       value={ktra.TgTTTBSo} />
+                <KTraRow label="Chiết khấu thương mại"      value={ktra.TTCKTMai} />
+                <KTraRow label="Chữ ký số (MST)"            value={ktra.ChuKyMST} />
+                <KTraRow label="Hiệu lực chữ ký"            value={ktra.ChuKyHieuLuc} />
+              </div>
+              {inv.KQKiemTraHDon && (
+                <p className="text-xs text-gray-500 mt-1.5 italic px-1">{inv.KQKiemTraHDon}</p>
+              )}
+            </section>
+          )}
+
+          {/* Downloads */}
+          {(inv.LinkDownloadXML || inv.LinkDownloadPDF) && (
+            <section>
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Tải xuống</h3>
+              <div className="flex gap-2">
+                {inv.LinkDownloadXML && (
+                  <a href={inv.LinkDownloadXML} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors">
+                    <Download size={13} /> XML <ExternalLink size={10} className="text-gray-400" />
+                  </a>
+                )}
+                {inv.LinkDownloadPDF && (
+                  <a href={inv.LinkDownloadPDF} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm border border-red-200 bg-red-50 rounded-lg hover:bg-red-100 text-red-600 transition-colors">
+                    <FileText size={13} /> PDF <ExternalLink size={10} className="text-red-400" />
+                  </a>
                 )}
               </div>
-            )}
-
-            {/* Seller */}
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Người bán</h3>
-              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
-                <p><span className="text-gray-500 w-28 inline-block">Tên:</span> <span className="font-medium">{inv.NBanTen ?? '—'}</span></p>
-                <p><span className="text-gray-500 w-28 inline-block">MST:</span> {inv.NBanMST ?? '—'}</p>
-                <p><span className="text-gray-500 w-28 inline-block">Địa chỉ:</span> {inv.NBanDChi ?? '—'}</p>
-              </div>
             </section>
+          )}
 
-            {/* Buyer */}
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Người mua</h3>
-              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
-                <p><span className="text-gray-500 w-28 inline-block">Tên:</span> <span className="font-medium">{inv.NMuaTen ?? '—'}</span></p>
-                <p><span className="text-gray-500 w-28 inline-block">MST:</span> {inv.NMuaMST ?? '—'}</p>
-                <p><span className="text-gray-500 w-28 inline-block">Địa chỉ:</span> {inv.NMuaDChi ?? '—'}</p>
-              </div>
-            </section>
-
-            {/* Payment */}
-            <section>
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Thanh toán</h3>
-              <div className="bg-indigo-50 rounded-lg p-3 space-y-1 text-sm">
-                <p className="flex justify-between"><span className="text-gray-500">Tiền chưa thuế:</span><span className="font-medium">{fmt(inv.TgTCThue)} đ</span></p>
-                <p className="flex justify-between"><span className="text-gray-500">Tiền thuế GTGT:</span><span className="font-medium">{fmt(inv.TgTThue)} đ</span></p>
-                <p className="flex justify-between border-t border-indigo-100 pt-1 mt-1">
-                  <span className="font-semibold text-gray-700">Tổng thanh toán:</span>
-                  <span className="font-bold text-indigo-700 text-base">{fmt(inv.TgTTTBSo)} đ</span>
-                </p>
-                {inv.HTTToan && <p><span className="text-gray-500">Hình thức TT:</span> {inv.HTTToan}</p>}
-              </div>
-            </section>
-
-            {/* Line items */}
-            {lines.length > 0 && (
-              <section>
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Hàng hóa / Dịch vụ ({lines.length} dòng)
-                </h3>
-                <div className="overflow-x-auto rounded-lg border border-gray-200">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        {['STT','Tên hàng','ĐVT','SL','Đơn giá','Thành tiền','Thuế'].map(h => (
-                          <th key={h} className="px-3 py-2 text-left text-gray-500 font-medium">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {lines.map((l, i) => (
-                        <tr key={i} className="hover:bg-gray-50">
-                          <td className="px-3 py-2 text-gray-400">{l.STT ?? i+1}</td>
-                          <td className="px-3 py-2 text-gray-800 max-w-[180px]">
-                            {l.MHHDVu && <span className="text-gray-400 mr-1">[{l.MHHDVu}]</span>}
-                            {l.THHDVu}
-                          </td>
-                          <td className="px-3 py-2">{l.DVTinh ?? '—'}</td>
-                          <td className="px-3 py-2 text-right">{l.SLuong ?? '—'}</td>
-                          <td className="px-3 py-2 text-right">{fmt(l.DGia)}</td>
-                          <td className="px-3 py-2 text-right font-medium">{fmt(l.ThTien)}</td>
-                          <td className="px-3 py-2 text-right">{l.TSuat != null ? `${l.TSuat}%` : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            )}
-
-            {/* Downloads */}
-            {(inv.LinkDownloadXML || inv.LinkDownloadPDF) && (
-              <section>
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tải xuống</h3>
-                <div className="flex gap-2">
-                  {inv.LinkDownloadXML && (
-                    <a href={inv.LinkDownloadXML} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600">
-                      <Download size={14} /> XML
-                      <ExternalLink size={11} className="text-gray-400" />
-                    </a>
-                  )}
-                  {inv.LinkDownloadPDF && (
-                    <a href={inv.LinkDownloadPDF} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-2 text-sm border border-red-200 bg-red-50 rounded-lg hover:bg-red-100 text-red-600">
-                      <FileText size={14} /> PDF
-                      <ExternalLink size={11} className="text-red-400" />
-                    </a>
-                  )}
-                </div>
-              </section>
-            )}
-          </div>
-        )}
+        </div>
       </div>
     </div>
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-const today = new Date().toISOString().slice(0, 10)
+// ─── Inline row helper (payment section) ──────────────────────────────────────
+function Row({ label, value, cls = 'text-gray-700' }: { label: string; value: string; cls?: string }) {
+  return (
+    <div className="flex justify-between items-center">
+      <span className="text-gray-500">{label}</span>
+      <span className={`font-medium ${cls}`}>{value}</span>
+    </div>
+  )
+}
+
+// ─── Error type helper ────────────────────────────────────────────────────────
+type Err = { response?: { data?: { detail?: string } } }
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+const today    = new Date().toISOString().slice(0, 10)
 const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
 
 export default function PurchaseInvoicesPage() {
-  const [invoices,  setInvoices]  = useState<PurchaseInvoiceItem[]>([])
-  const [loading,   setLoading]   = useState(false)
-  const [error,     setError]     = useState('')
-  const [selected,  setSelected]  = useState<PurchaseInvoiceItem | null>(null)
-  const [apiMode,   setApiMode]   = useState<'v1'|'tct'>('tct')
+  const [invoices, setInvoices] = useState<PurchaseInvoiceItem[]>([])
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState('')
+  const [selected, setSelected] = useState<PurchaseInvoiceItem | null>(null)
+  const [showFilter, setShowFilter] = useState(true)
 
-  // Filters
-  const [comName,       setComName]       = useState('')
-  const [comTaxCode,    setComTaxCode]    = useState('')
-  const [fromDate,      setFromDate]      = useState(monthAgo)
-  const [toDate,        setToDate]        = useState(today)
-  const [trangthai,     setTrangthai]     = useState(-1)
-  const [loaihoadon,    setLoaihoadon]    = useState(-1)
-  const [invoiceNo,     setInvoiceNo]     = useState('')
-  const [pattern,       setPattern]       = useState('')
-  const [serial,        setSerial]        = useState('')
-
-  const mountedRef = useRef(true)
-  useEffect(() => { return () => { mountedRef.current = false } }, [])
+  // Bộ lọc
+  const [fromDate,   setFromDate]   = useState(monthAgo)
+  const [toDate,     setToDate]     = useState(today)
+  const [comName,    setComName]    = useState('')
+  const [comTaxCode, setComTaxCode] = useState('')
+  const [invoiceNo,  setInvoiceNo]  = useState('')
+  const [pattern,    setPattern]    = useState('')
+  const [serial,     setSerial]     = useState('')
+  const [trangthai,  setTrangthai]  = useState(-1)
 
   const fetchInvoices = async () => {
-    setLoading(true); setError('')
+    setLoading(true)
+    setError('')
     const params: InvoiceListParams = {
+      // Định dạng API: yyyy-MM-dd (giữ nguyên từ input)
       fromDateYMD: fromDate || undefined,
       toDateYMD:   toDate   || undefined,
       trangthai,
-      ...(comName.trim()    && { comName: comName.trim() }),
+      ...(comName.trim()    && { comName:    comName.trim() }),
       ...(comTaxCode.trim() && { comTaxCode: comTaxCode.trim() }),
-      ...(invoiceNo.trim()  && { no: parseInt(invoiceNo) }),
-      ...(pattern.trim()    && { pattern: pattern.trim() }),
-      ...(serial.trim()     && { serial: serial.trim() }),
-      ...(apiMode === 'tct' && { loaihoadon }),
+      ...(invoiceNo.trim()  && { no:         parseInt(invoiceNo) }),
+      ...(pattern.trim()    && { pattern:    pattern.trim() }),
+      ...(serial.trim()     && { serial:     serial.trim() }),
     }
     try {
-      const fn = apiMode === 'tct'
-        ? purchaseInvoiceApi.listInvoicesTCT
-        : purchaseInvoiceApi.listInvoices
-      const r = await fn(params)
-      if (mountedRef.current) setInvoices(r.data.data ?? [])
+      const r = await purchaseInvoiceApi.listInvoices(params)
+      setInvoices(r.data.data ?? [])
     } catch (e: unknown) {
-      if (mountedRef.current) {
-        const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-        setError(msg ?? 'Không thể tải danh sách hóa đơn')
-      }
+      setError((e as Err)?.response?.data?.detail ?? 'Không thể tải danh sách hóa đơn')
     } finally {
-      if (mountedRef.current) setLoading(false)
+      setLoading(false)
     }
   }
 
   const clearFilters = () => {
-    setComName(''); setComTaxCode(''); setFromDate(monthAgo); setToDate(today)
-    setTrangthai(-1); setLoaihoadon(-1); setInvoiceNo(''); setPattern(''); setSerial('')
+    setComName(''); setComTaxCode(''); setInvoiceNo(''); setPattern(''); setSerial('')
+    setFromDate(monthAgo); setToDate(today); setTrangthai(-1)
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <h1 className="text-xl font-bold text-gray-800">Hóa đơn đầu vào</h1>
 
       {/* Settings */}
       <SettingsPanel onSaved={() => {}} />
 
-      {/* Invoice list */}
+      {/* Invoice list card */}
       <div className="bg-white rounded-xl border border-gray-200">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-wrap gap-2">
-          <div className="flex items-center gap-2 font-semibold text-gray-700">
-            <Receipt size={18} className="text-indigo-500" />
-            Danh sách hóa đơn đầu vào
-            {!loading && invoices.length > 0 && (
-              <span className="text-xs font-normal text-gray-400">({invoices.length} hóa đơn)</span>
-            )}
-          </div>
-          {/* API mode toggle */}
+
+        {/* ── Card header ─────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            <div className="flex bg-gray-100 p-0.5 rounded-lg text-xs">
-              {(['tct', 'v1'] as const).map(m => (
-                <button key={m} onClick={() => setApiMode(m)}
-                  className={`px-3 py-1.5 rounded-md font-medium transition-colors
-                    ${apiMode === m ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}>
-                  {m === 'tct' ? 'TCT (v2)' : 'Matbao (v1)'}
-                </button>
-              ))}
-            </div>
-            <button onClick={fetchInvoices} disabled={loading}
-              className="btn-primary">
-              {loading
-                ? <><Loader2 size={14} className="animate-spin" /> Đang tải...</>
-                : <><Search size={14} /> Tìm kiếm</>}
-            </button>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="px-5 py-3 border-b bg-gray-50/60">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {/* Date range */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Từ ngày</label>
-              <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Đến ngày</label>
-              <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            {/* Seller */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Tên người bán</label>
-              <input value={comName} onChange={e => setComName(e.target.value)}
-                placeholder="Tên công ty..."
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">MST người bán</label>
-              <input value={comTaxCode} onChange={e => setComTaxCode(e.target.value)}
-                placeholder="Mã số thuế..."
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            {/* Invoice fields */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Số hóa đơn</label>
-              <input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)}
-                placeholder="Số HĐ..."
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Mẫu số HĐ</label>
-              <input value={pattern} onChange={e => setPattern(e.target.value)}
-                placeholder="Pattern..."
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Ký hiệu HĐ</label>
-              <input value={serial} onChange={e => setSerial(e.target.value)}
-                placeholder="Serial..."
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            </div>
-            {/* Status */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Trạng thái</label>
-              <select value={trangthai} onChange={e => setTrangthai(Number(e.target.value))}
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                <option value={-1}>Tất cả</option>
-                <option value={0}>Hợp lệ</option>
-                <option value={1}>Không hợp lệ</option>
-                <option value={2}>Trùng</option>
-              </select>
-            </div>
-            {apiMode === 'tct' && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Loại hóa đơn</label>
-                <select value={loaihoadon} onChange={e => setLoaihoadon(Number(e.target.value))}
-                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                  <option value={-1}>Tất cả</option>
-                  <option value={1}>Có mã</option>
-                  <option value={2}>Không mã</option>
-                  <option value={3}>Máy tính tiền</option>
-                </select>
-              </div>
+            <Receipt size={17} className="text-indigo-500" />
+            <span className="font-semibold text-gray-700 text-sm">Danh sách hóa đơn đầu vào</span>
+            {!loading && invoices.length > 0 && (
+              <span className="text-xs text-gray-400 font-normal">({invoices.length} hóa đơn)</span>
             )}
           </div>
-
-          <div className="flex items-center justify-between mt-2">
-            <button onClick={clearFilters}
-              className="text-xs text-indigo-600 hover:underline">
-              Xoá bộ lọc
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowFilter(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition-colors
+                ${showFilter ? 'border-indigo-200 text-indigo-600 bg-indigo-50' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+              <SlidersHorizontal size={13} />
+              Bộ lọc
             </button>
-            <p className="text-xs text-gray-400">Nhấn <strong>Tìm kiếm</strong> để tải dữ liệu từ Matbao API</p>
+            <button onClick={fetchInvoices} disabled={loading} className="btn-primary">
+              {loading
+                ? <><Loader2 size={13} className="animate-spin" /> Đang tải...</>
+                : <><Search size={13} /> Tìm kiếm</>}
+            </button>
           </div>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="mx-5 mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
-            <AlertCircle size={15} className="mt-0.5 shrink-0" />
-            <span>{error}</span>
-            <button onClick={() => setError('')} className="ml-auto"><X size={13} /></button>
+        {/* ── Bộ lọc ──────────────────────────────────────────────────── */}
+        {showFilter && (
+          <div className="px-5 py-3 border-b bg-gray-50/50">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+
+              {/* Khoảng ngày */}
+              <Field label={<span className="flex items-center gap-1"><CalendarRange size={11} />Từ ngày</span> as unknown as string}>
+                <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+                  className={inputCls} />
+              </Field>
+              <Field label={<span className="flex items-center gap-1"><CalendarRange size={11} />Đến ngày</span> as unknown as string}>
+                <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+                  className={inputCls} />
+              </Field>
+
+              {/* Người bán */}
+              <Field label="Tên người bán">
+                <input value={comName} onChange={e => setComName(e.target.value)}
+                  placeholder="Tên công ty..." className={inputCls} />
+              </Field>
+              <Field label="MST người bán">
+                <input value={comTaxCode} onChange={e => setComTaxCode(e.target.value)}
+                  placeholder="Mã số thuế..." className={`${inputCls} font-mono`} />
+              </Field>
+
+              {/* Trạng thái */}
+              <Field label="Trạng thái">
+                <select value={trangthai} onChange={e => setTrangthai(Number(e.target.value))}
+                  className={inputCls}>
+                  <option value={-1}>Tất cả</option>
+                  <option value={0}>Hợp lệ</option>
+                  <option value={1}>Không hợp lệ</option>
+                  <option value={2}>Trùng</option>
+                  <option value={3}>Có sai sót</option>
+                </select>
+              </Field>
+
+              {/* Số / ký hiệu */}
+              <Field label={<span className="flex items-center gap-1"><Hash size={11} />Số hóa đơn</span> as unknown as string}>
+                <input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)}
+                  placeholder="Số HĐ..." className={inputCls} />
+              </Field>
+              <Field label="Mẫu số HĐ">
+                <input value={pattern} onChange={e => setPattern(e.target.value)}
+                  placeholder="1C22..." className={inputCls} />
+              </Field>
+              <Field label="Ký hiệu HĐ">
+                <input value={serial} onChange={e => setSerial(e.target.value)}
+                  placeholder="C22MHA..." className={inputCls} />
+              </Field>
+            </div>
+
+            <div className="flex items-center justify-between mt-2.5">
+              <button onClick={clearFilters} className="text-xs text-indigo-500 hover:underline">
+                Xoá bộ lọc
+              </button>
+              <p className="text-xs text-gray-400">
+                Lọc theo khoảng ngày: <strong>{fmtDate(fromDate)}</strong> – <strong>{fmtDate(toDate)}</strong>
+              </p>
+            </div>
           </div>
         )}
 
-        {/* Table */}
+        {/* ── Error ───────────────────────────────────────────────────── */}
+        {error && (
+          <div className="mx-5 mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span className="flex-1">{error}</span>
+            <button onClick={() => setError('')}><X size={13} /></button>
+          </div>
+        )}
+
+        {/* ── Table ───────────────────────────────────────────────────── */}
         {loading ? (
           <div className="flex items-center justify-center h-48 text-gray-400 gap-2">
             <Loader2 size={20} className="animate-spin" /> Đang tải hóa đơn...
           </div>
         ) : invoices.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-gray-400 gap-2">
-            <Receipt size={32} className="opacity-30" />
-            <p className="text-sm">Chưa có dữ liệu — nhấn <strong>Tìm kiếm</strong> để tải hóa đơn</p>
+          <div className="flex flex-col items-center justify-center h-52 text-gray-400 gap-2">
+            <Receipt size={36} className="opacity-20" />
+            <p className="text-sm">Chưa có dữ liệu — nhấn <strong className="text-indigo-600">Tìm kiếm</strong> để tải</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr>
-                  {['STT','Ký hiệu / Số HĐ','Ngày lập','Người bán','Người mua',
-                    'Tiền chưa thuế','Tổng TT','Trạng thái','Thao tác'].map(h => (
-                    <th key={h} className="table-th whitespace-nowrap">{h}</th>
-                  ))}
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="table-th w-10 text-center">STT</th>
+                  <th className="table-th">Ký hiệu / Số HĐ</th>
+                  <th className="table-th whitespace-nowrap">Ngày lập</th>
+                  <th className="table-th">Người bán</th>
+                  <th className="table-th">Người mua</th>
+                  <th className="table-th text-right whitespace-nowrap">Tiền chưa thuế</th>
+                  <th className="table-th text-right whitespace-nowrap">Tổng TT</th>
+                  <th className="table-th text-center">Trạng thái</th>
+                  <th className="table-th text-center">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {invoices.map((inv, idx) => {
                   const st = statusLabel(inv.TThai)
                   return (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                      <td className="table-td text-gray-400 w-10">{idx + 1}</td>
+                    <tr key={idx} className="hover:bg-indigo-50/30 transition-colors cursor-default">
+                      <td className="table-td text-center text-gray-400">{idx + 1}</td>
+
+                      {/* Ký hiệu + số */}
                       <td className="table-td">
-                        <div className="font-mono text-xs text-indigo-600">{inv.KHMSHDon}{inv.KHHDon}</div>
-                        <div className="font-semibold text-gray-800">#{inv.SHDon}</div>
+                        {inv.KHMSHDon && (
+                          <div className="font-mono text-[11px] text-indigo-500 leading-tight">
+                            {inv.KHMSHDon}{inv.KHHDon}
+                          </div>
+                        )}
+                        <div className="font-semibold text-gray-800">#{inv.SHDon ?? '—'}</div>
                       </td>
-                      <td className="table-td whitespace-nowrap text-gray-600">
-                        <div>{inv.NLap ?? '—'}</div>
-                        {inv.NKy && <div className="text-xs text-gray-400">Ký: {inv.NKy}</div>}
+
+                      {/* Ngày lập (dd/MM/yyyy) */}
+                      <td className="table-td whitespace-nowrap text-gray-600 text-xs">
+                        <div className="font-medium">{fmtDate(inv.NLap)}</div>
+                        {inv.NKy ? <div className="text-gray-400">Ký: {fmtDate(inv.NKy)}</div> : null}
                       </td>
-                      <td className="table-td max-w-[180px]">
-                        <div className="font-medium text-gray-800 truncate" title={inv.NBanTen}>{inv.NBanTen ?? '—'}</div>
-                        <div className="text-xs text-gray-400 font-mono">{inv.NBanMST}</div>
+
+                      {/* Người bán */}
+                      <td className="table-td max-w-[160px]">
+                        <div className="font-medium text-gray-800 truncate text-xs" title={inv.NBanTen}>
+                          {inv.NBanTen ?? '—'}
+                        </div>
+                        {inv.NBanMST && (
+                          <div className="text-[11px] text-gray-400 font-mono">{inv.NBanMST}</div>
+                        )}
                       </td>
-                      <td className="table-td max-w-[180px]">
-                        <div className="text-gray-700 truncate" title={inv.NMuaTen}>{inv.NMuaTen ?? '—'}</div>
-                        <div className="text-xs text-gray-400 font-mono">{inv.NMuaMST}</div>
+
+                      {/* Người mua */}
+                      <td className="table-td max-w-[160px]">
+                        <div className="text-gray-700 truncate text-xs" title={inv.NMuaTen}>
+                          {inv.NMuaTen ?? '—'}
+                        </div>
+                        {inv.NMuaMST && (
+                          <div className="text-[11px] text-gray-400 font-mono">{inv.NMuaMST}</div>
+                        )}
                       </td>
-                      <td className="table-td text-right text-gray-700 whitespace-nowrap">
-                        {fmt(inv.TgTCThue)}
+
+                      {/* Tiền */}
+                      <td className="table-td text-right text-xs text-gray-600 whitespace-nowrap">
+                        {fmtMoney(inv.TgTCThue)}
                       </td>
-                      <td className="table-td text-right font-semibold text-indigo-700 whitespace-nowrap">
-                        {fmt(inv.TgTTTBSo)}
+                      <td className="table-td text-right text-xs font-semibold text-indigo-700 whitespace-nowrap">
+                        {fmtMoney(inv.TgTTTBSo)}
                       </td>
-                      <td className="table-td">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${st.cls}`}>
-                          {inv.TenTThai ?? st.text}
+
+                      {/* Trạng thái */}
+                      <td className="table-td text-center">
+                        <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${st.cls}`}>
+                          {inv.TenTThai
+                            ? (inv.TenTThai.length > 20 ? st.text : inv.TenTThai)
+                            : st.text}
                         </span>
                       </td>
-                      <td className="table-td">
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => setSelected(inv)}
-                            title="Xem chi tiết"
+
+                      {/* Thao tác */}
+                      <td className="table-td text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button onClick={() => setSelected(inv)} title="Xem chi tiết"
                             className="text-indigo-400 hover:text-indigo-600 transition-colors">
                             <Eye size={15} />
                           </button>
                           {inv.LinkDownloadPDF && (
                             <a href={inv.LinkDownloadPDF} target="_blank" rel="noreferrer"
-                              title="Tải PDF"
-                              className="text-red-400 hover:text-red-600 transition-colors">
+                              title="Tải PDF" className="text-red-400 hover:text-red-600 transition-colors">
                               <FileText size={15} />
                             </a>
                           )}
                           {inv.LinkDownloadXML && (
                             <a href={inv.LinkDownloadXML} target="_blank" rel="noreferrer"
-                              title="Tải XML"
-                              className="text-gray-400 hover:text-gray-600 transition-colors">
+                              title="Tải XML" className="text-gray-400 hover:text-gray-600 transition-colors">
                               <Download size={15} />
                             </a>
                           )}

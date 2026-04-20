@@ -40,7 +40,34 @@ def _run_column_migrations() -> None:
         # SAP B1 integration
         ("integration_configs", "sap_company_db",      "NVARCHAR(200) NULL"),
         ("integration_configs", "sap_base_url",        "NVARCHAR(500) NULL"),
+        # Purchase invoice – rename matbao_token → matbao_api_key
+        ("purchase_invoice_configs", "matbao_api_key", "NVARCHAR(MAX) NULL"),
     ]
+    # ── Đổi VARCHAR → NVARCHAR cho purchase_invoice_configs ──────────────────
+    # SQL Server: ALTER COLUMN không hỗ trợ DEFAULT inline → chỉ đổi kiểu dữ liệu
+    nvarchar_alters = [
+        # (table, column, new_type_def)
+        ("purchase_invoice_configs", "name",            "NVARCHAR(200) NOT NULL"),
+        ("purchase_invoice_configs", "matbao_base_url", "NVARCHAR(500) NOT NULL"),
+        ("purchase_invoice_configs", "created_at",      "NVARCHAR(50)  NULL"),
+        ("purchase_invoice_configs", "updated_at",      "NVARCHAR(50)  NULL"),
+    ]
+    with engine.connect() as conn:
+        for table, col, new_type in nvarchar_alters:
+            conn.execute(text(f"""
+                IF EXISTS (
+                    SELECT 1 FROM sys.columns c
+                    JOIN sys.types t ON c.user_type_id = t.user_type_id
+                    WHERE c.object_id = OBJECT_ID(N'{table}')
+                      AND c.name      = N'{col}'
+                      AND t.name      = 'varchar'
+                )
+                BEGIN
+                    ALTER TABLE [{table}] ALTER COLUMN [{col}] {new_type}
+                END
+            """))
+        conn.commit()
+    logger.info("NVARCHAR column migrations applied")
     with engine.connect() as conn:
         for table, col, col_def in migrations:
             conn.execute(text(f"""

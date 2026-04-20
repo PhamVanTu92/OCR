@@ -39,10 +39,16 @@ keycloak_openid = KeycloakOpenID(
 
 
 def get_keycloak_admin() -> KeycloakAdmin:
+    """
+    Trả về KeycloakAdmin dùng service account của client (client_id + client_secret).
+    Yêu cầu trong Keycloak:
+      Clients → ocr → Service accounts roles → gán các role của realm-management:
+        manage-users, view-users, query-users
+    """
     return KeycloakAdmin(
         server_url=settings.KEYCLOAK_URL,
-        username=settings.KEYCLOAK_ADMIN_USERNAME,
-        password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        client_id=settings.KEYCLOAK_CLIENT_ID,
+        client_secret_key=settings.KEYCLOAK_CLIENT_SECRET,
         realm_name=settings.KEYCLOAK_REALM,
         verify=True,
     )

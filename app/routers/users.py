@@ -1,9 +1,11 @@
 """
 User management router.
 
+POST   /users/                       – Tạo người dùng mới
 GET    /users/                       – List users
 GET    /users/{user_id}              – User detail (with roles)
 PATCH  /users/{user_id}              – Update user (full_name, is_active)
+DELETE /users/{user_id}              – Xoá người dùng
 GET    /users/{user_id}/roles        – List roles assigned to user
 POST   /users/{user_id}/roles        – Assign role
 DELETE /users/{user_id}/roles/{rid}  – Remove role
@@ -12,14 +14,17 @@ POST   /users/{user_id}/organizations – Assign to org
 DELETE /users/{user_id}/organizations/{org_id} – Remove from org
 """
 
+import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
+
 from app.core.database import get_db
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.dependencies import CurrentUser, get_current_user, require_roles
 from app.models.role import SystemRole, UserRole
 from app.models.user import User, UserOrganization
@@ -30,6 +35,14 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 # ─── Extra schemas ─────────────────────────────────────────────────────────────
+
+class UserCreateRequest(BaseModel):
+    username:  str
+    email:     str
+    full_name: Optional[str] = None
+    password:  str
+    is_active: bool = True
+
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -120,6 +133,111 @@ async def list_users(
     import json
     result = [_user_detail(u, db) for u in users]
     return result
+
+
+@router.post("/", status_code=201, summary="Tạo người dùng mới")
+async def create_user(
+    body: UserCreateRequest,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(require_roles("admin")),
+):
+    """Tạo tài khoản trên Keycloak rồi ghi bản ghi local."""
+    from app.services.keycloak_service import get_keycloak_admin
+
+    # Kiểm tra trùng email / username trong DB local
+    if db.query(User).filter(User.email == body.email).first():
+        raise ConflictError("Email đã tồn tại trong hệ thống")
+    if db.query(User).filter(User.username == body.username).first():
+        raise ConflictError("Tên đăng nhập đã tồn tại trong hệ thống")
+
+    # Tạo user trên Keycloak
+    try:
+        admin = get_keycloak_admin()
+        result = admin.create_user(
+            {
+                "username":      body.username,
+                "email":         body.email,
+                "firstName":     (body.full_name or "").split(" ")[0],
+                "lastName":      " ".join((body.full_name or "").split(" ")[1:]),
+                "enabled":       body.is_active,
+                "emailVerified": True,
+                "credentials": [
+                    {"type": "password", "value": body.password, "temporary": False}
+                ],
+            },
+            exist_ok=False,
+        )
+        # python-keycloak 4.x trả về str UUID; bản cũ có thể trả về dict
+        keycloak_id = result if isinstance(result, str) else str(result)
+    except ConflictError:
+        raise
+    except Exception as exc:
+        logger.error("Keycloak create_user failed: %s", exc)
+        detail = str(exc)
+        # Bắt lỗi duplicate từ Keycloak (4xx response)
+        if "409" in detail or "already exists" in detail.lower() or "conflict" in detail.lower():
+            raise ConflictError("Tên đăng nhập hoặc email đã tồn tại trên hệ thống xác thực")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể tạo người dùng trên Keycloak: {exc}",
+        )
+
+    # Ghi vào DB local
+    user = User(
+        keycloak_id=keycloak_id,
+        email=body.email,
+        username=body.username,
+        full_name=body.full_name,
+        is_active=body.is_active,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    logger.info("Created user %s (keycloak_id=%s)", body.username, keycloak_id)
+    return _user_detail(user, db)
+
+
+@router.delete("/{user_id}", status_code=204, summary="Xoá người dùng")
+async def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_roles("admin")),
+):
+    """Xoá người dùng khỏi DB local và Keycloak."""
+    from app.services.keycloak_service import get_keycloak_admin
+    from app.models.document import Document
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise NotFoundError("Không tìm thấy người dùng")
+
+    if user.id == current_user.user.id:
+        raise BadRequestError("Không thể xoá tài khoản của chính mình")
+
+    # Kiểm tra tài liệu thuộc về user (user_id NOT NULL → không thể set NULL)
+    doc_count = db.query(Document).filter(Document.user_id == user_id).count()
+    if doc_count > 0:
+        raise BadRequestError(
+            f"Không thể xoá người dùng đang có {doc_count} chứng từ trong hệ thống. "
+            "Hãy vô hiệu hoá tài khoản thay thế."
+        )
+
+    # confirmed_by_user_id là nullable → clear trước khi xoá
+    db.query(Document).filter(Document.confirmed_by_user_id == user_id).update(
+        {"confirmed_by_user_id": None}, synchronize_session=False
+    )
+
+    # Xoá trên Keycloak (không fail nếu không tìm thấy)
+    try:
+        admin = get_keycloak_admin()
+        admin.delete_user(user.keycloak_id)
+        logger.info("Deleted Keycloak user %s", user.keycloak_id)
+    except Exception as exc:
+        logger.warning("Could not delete Keycloak user %s: %s", user.keycloak_id, exc)
+
+    # Xoá DB local (cascade: roles, orgs, api_tokens)
+    db.delete(user)
+    db.commit()
 
 
 @router.get("/{user_id}", summary="Chi tiết người dùng")

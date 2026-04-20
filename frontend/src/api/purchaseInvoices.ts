@@ -2,7 +2,6 @@ import client from './client'
 import type {
   PurchaseInvoiceConfig,
   PurchaseInvoiceItem,
-  CaptchaResponse,
 } from '../types'
 
 export interface InvoiceListParams {
@@ -12,7 +11,6 @@ export interface InvoiceListParams {
   fromDateYMD?:    string
   toDateYMD?:      string
   trangthai?:      number
-  loaihoadon?:     number
   pattern?:        string
   serial?:         string
   typeSearchDate?: number
@@ -24,6 +22,13 @@ export interface InvoiceListResponse {
   total: number
 }
 
+export interface TestTokenResponse {
+  success:             boolean
+  message:             string
+  token_preview:       string
+  expires_in_seconds:  number
+}
+
 export const purchaseInvoiceApi = {
   // ── Config ────────────────────────────────────────────────────────────────
   getConfig: () =>
@@ -32,27 +37,17 @@ export const purchaseInvoiceApi = {
   updateConfig: (data: Partial<PurchaseInvoiceConfig>) =>
     client.put<PurchaseInvoiceConfig>('/purchase-invoices/config', data),
 
-  // ── Invoice list ──────────────────────────────────────────────────────────
-  listInvoices: (params: InvoiceListParams) =>
-    client.get<InvoiceListResponse>('/purchase-invoices/list', { params }),
+  // ── Test API key ──────────────────────────────────────────────────────────
+  testToken: () =>
+    client.post<TestTokenResponse>('/purchase-invoices/test-token'),
 
-  listInvoicesTCT: (params: InvoiceListParams) =>
-    client.get<InvoiceListResponse>('/purchase-invoices/list-tct', { params }),
+  // ── Invoice list (POST with JSON body) ────────────────────────────────────
+  listInvoices: (params: InvoiceListParams) =>
+    client.post<InvoiceListResponse>('/purchase-invoices/list', params),
 
   // ── Detail ────────────────────────────────────────────────────────────────
   detailByUrl: (url_xml: string, kiem_tra_hop_le = 0) =>
     client.get<PurchaseInvoiceItem>('/purchase-invoices/detail-by-url', {
       params: { url_xml, kiem_tra_hop_le },
     }),
-
-  // ── TCT Auth ──────────────────────────────────────────────────────────────
-  getCaptcha: () =>
-    client.get<CaptchaResponse>('/purchase-invoices/captcha'),
-
-  loginTCT: (body: {
-    username: string
-    password: string
-    cvalue:   string
-    ckey:     string
-  }) => client.post<{ message: string }>('/purchase-invoices/login-tct', body),
 }
