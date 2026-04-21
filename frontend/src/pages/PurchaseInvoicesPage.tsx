@@ -1,13 +1,13 @@
-import React, { useEffect, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import {
-  Settings, RefreshCw, Search, X, Download, Eye,
-  ChevronDown, ChevronUp, AlertCircle, CheckCircle2,
-  FileText, Receipt, ExternalLink, Loader2, KeyRound,
+  Search, X, Download, Eye,
+  AlertCircle, FileText, Receipt, ExternalLink, Loader2,
   BadgeCheck, BadgeX, Building2, User, CalendarRange,
   Hash, SlidersHorizontal,
 } from 'lucide-react'
 import { purchaseInvoiceApi, type InvoiceListParams } from '../api/purchaseInvoices'
-import type { PurchaseInvoiceConfig, PurchaseInvoiceItem, PurchaseInvoiceLineItem } from '../types'
+import type { PurchaseInvoiceItem, PurchaseInvoiceLineItem } from '../types'
+import Pagination from '../components/Pagination'
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -44,142 +44,16 @@ const statusLabel = (code?: number) => {
 }
 
 // ─── Input helpers ────────────────────────────────────────────────────────────
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs text-gray-500 mb-1">{label}</label>
+      <label className="block text-xs text-gray-500 mb-1">{label as React.ReactNode}</label>
       {children}
     </div>
   )
 }
 
 const inputCls = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white'
-
-// ─── Settings panel ───────────────────────────────────────────────────────────
-function SettingsPanel({ onSaved }: { onSaved: () => void }) {
-  const [open,      setOpen]      = useState(false)
-  const [cfg,       setCfg]       = useState<PurchaseInvoiceConfig | null>(null)
-  const [saving,    setSaving]    = useState(false)
-  const [testing,   setTesting]   = useState(false)
-  const [error,     setError]     = useState('')
-  const [success,   setSuccess]   = useState('')
-  const [tokenInfo, setTokenInfo] = useState('')
-
-  useEffect(() => {
-    purchaseInvoiceApi.getConfig().then(r => setCfg(r.data))
-  }, [])
-
-  const handleSave = async () => {
-    if (!cfg) return
-    setSaving(true); setError(''); setSuccess(''); setTokenInfo('')
-    try {
-      await purchaseInvoiceApi.updateConfig({
-        name:            cfg.name,
-        matbao_base_url: cfg.matbao_base_url,
-        matbao_api_key:  cfg.matbao_api_key ?? undefined,
-      })
-      setSuccess('Đã lưu cấu hình!')
-      onSaved()
-    } catch (e: unknown) {
-      setError((e as Err)?.response?.data?.detail ?? 'Lỗi lưu cấu hình')
-    } finally { setSaving(false) }
-  }
-
-  const handleTestToken = async () => {
-    setTesting(true); setError(''); setSuccess(''); setTokenInfo('')
-    try {
-      const r = await purchaseInvoiceApi.testToken()
-      setSuccess(r.data.message)
-      setTokenInfo(
-        `Preview: ${r.data.token_preview} · Hết hạn sau ${Math.floor(r.data.expires_in_seconds / 60)} phút`
-      )
-    } catch (e: unknown) {
-      setError((e as Err)?.response?.data?.detail ?? 'API key không hợp lệ')
-    } finally { setTesting(false) }
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50/60 transition-colors">
-        <div className="flex items-center gap-2 font-semibold text-gray-700 text-sm">
-          <Settings size={16} className="text-indigo-500" />
-          Thiết lập kết nối API
-          {cfg?.matbao_api_key && (
-            <span className="text-xs font-normal text-green-600 flex items-center gap-1">
-              <CheckCircle2 size={11} /> Đã cấu hình
-            </span>
-          )}
-        </div>
-        {open ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
-      </button>
-
-      {open && cfg && (
-        <div className="px-5 pb-5 border-t space-y-4 pt-4">
-          {error && (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
-              <AlertCircle size={14} className="mt-0.5 shrink-0" />
-              <span className="flex-1">{error}</span>
-              <button onClick={() => setError('')}><X size={12} /></button>
-            </div>
-          )}
-          {success && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
-                <CheckCircle2 size={14} />
-                <span className="flex-1">{success}</span>
-                <button onClick={() => setSuccess('')}><X size={12} /></button>
-              </div>
-              {tokenInfo && <p className="text-xs text-gray-400 font-mono px-1">{tokenInfo}</p>}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Tên cấu hình">
-              <input value={cfg.name} onChange={e => setCfg({ ...cfg, name: e.target.value })}
-                className={inputCls} />
-            </Field>
-            <Field label="Base URL API">
-              <input value={cfg.matbao_base_url}
-                onChange={e => setCfg({ ...cfg, matbao_base_url: e.target.value })}
-                className={`${inputCls} font-mono text-xs`} />
-            </Field>
-          </div>
-
-          <Field label={
-            <span className="flex items-center gap-1.5">
-              <KeyRound size={12} className="text-indigo-400" />
-              API Key (UUID) <span className="text-red-500">*</span>
-            </span> as unknown as string
-          }>
-            <input type="password"
-              value={cfg.matbao_api_key ?? ''}
-              onChange={e => setCfg({ ...cfg, matbao_api_key: e.target.value })}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              className={`${inputCls} font-mono`} />
-            <p className="text-xs text-gray-400 mt-1">
-              Lấy tại trang quản trị hóa đơn đầu vào → API Key
-            </p>
-          </Field>
-
-          <div className="flex justify-end gap-2">
-            <button onClick={handleTestToken} disabled={testing || !cfg.matbao_api_key}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm border border-indigo-200 text-indigo-600
-                rounded-lg hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-              {testing
-                ? <><Loader2 size={13} className="animate-spin" /> Đang kiểm tra...</>
-                : <><RefreshCw size={13} /> Kiểm tra API Key</>}
-            </button>
-            <button onClick={handleSave} disabled={saving} className="btn-primary">
-              {saving ? <><Loader2 size={13} className="animate-spin" /> Đang lưu...</> : 'Lưu cấu hình'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── KTra check row ───────────────────────────────────────────────────────────
 function KTraRow({ label, value }: { label: string; value?: string | boolean | null }) {
@@ -444,11 +318,20 @@ const today    = new Date().toISOString().slice(0, 10)
 const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
 
 export default function PurchaseInvoicesPage() {
-  const [invoices, setInvoices] = useState<PurchaseInvoiceItem[]>([])
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState('')
-  const [selected, setSelected] = useState<PurchaseInvoiceItem | null>(null)
+  const [invoices,  setInvoices]  = useState<PurchaseInvoiceItem[]>([])
+  const [loading,   setLoading]   = useState(false)
+  const [error,     setError]     = useState('')
+  const [selected,  setSelected]  = useState<PurchaseInvoiceItem | null>(null)
   const [showFilter, setShowFilter] = useState(true)
+
+  // Phân trang
+  const [page,     setPage]     = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+
+  const paged = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return invoices.slice(start, start + pageSize)
+  }, [invoices, page, pageSize])
 
   // Bộ lọc
   const [fromDate,   setFromDate]   = useState(monthAgo)
@@ -477,6 +360,7 @@ export default function PurchaseInvoicesPage() {
     try {
       const r = await purchaseInvoiceApi.listInvoices(params)
       setInvoices(r.data.data ?? [])
+      setPage(1)
     } catch (e: unknown) {
       setError((e as Err)?.response?.data?.detail ?? 'Không thể tải danh sách hóa đơn')
     } finally {
@@ -491,10 +375,10 @@ export default function PurchaseInvoicesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold text-gray-800">Hóa đơn đầu vào</h1>
-
-      {/* Settings */}
-      <SettingsPanel onSaved={() => {}} />
+      <div className="flex items-center gap-3">
+        <Receipt size={22} className="text-indigo-500" />
+        <h1 className="text-xl font-bold text-gray-800">Xử lý hóa đơn đầu vào</h1>
+      </div>
 
       {/* Invoice list card */}
       <div className="bg-white rounded-xl border border-gray-200">
@@ -623,11 +507,12 @@ export default function PurchaseInvoicesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {invoices.map((inv, idx) => {
+                {paged.map((inv, idx) => {
+                  const rowNo = (page - 1) * pageSize + idx + 1
                   const st = statusLabel(inv.TThai)
                   return (
-                    <tr key={idx} className="hover:bg-indigo-50/30 transition-colors cursor-default">
-                      <td className="table-td text-center text-gray-400">{idx + 1}</td>
+                    <tr key={inv.InvID ?? idx} className="hover:bg-indigo-50/30 transition-colors cursor-default">
+                      <td className="table-td text-center text-gray-400">{rowNo}</td>
 
                       {/* Ký hiệu + số */}
                       <td className="table-td">
@@ -709,6 +594,18 @@ export default function PurchaseInvoicesPage() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {/* Phân trang */}
+        {!loading && invoices.length > 0 && (
+          <Pagination
+            total={invoices.length}
+            page={page}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={size => { setPageSize(size); setPage(1) }}
+            pageSizeOptions={[10, 20, 50, 100]}
+          />
         )}
       </div>
 

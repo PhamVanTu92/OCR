@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Building2, FileText, ScanLine, LogOut,
   ChevronLeft, Menu, ChevronDown, ChevronRight, Folder,
-  Users, ShieldCheck, Receipt,
+  Users, ShieldCheck, Receipt, Settings,
 } from 'lucide-react'
 import { docTypeApi } from '../../api/documentTypes'
 import type { DocumentCategory, DocumentType } from '../../types'
@@ -196,7 +196,15 @@ export default function MainLayout() {
             )}
           </div>
 
-          {/* Divider */}
+          {/* ── Xử lý hóa đơn đầu vào ────────────────────────────────── */}
+          <SideNavLink
+            to="/purchase-invoices"
+            icon={<Receipt size={18} />}
+            label="Xử lý HĐ đầu vào"
+            collapsed={collapsed}
+          />
+
+          {/* Divider – Quản trị hệ thống */}
           {!collapsed && (
             <div className="px-3 pt-3 pb-1">
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -206,8 +214,13 @@ export default function MainLayout() {
           )}
           {collapsed && <div className="my-1 border-t border-gray-100" />}
 
-          {/* Hóa đơn đầu vào */}
-          <SideNavLink to="/purchase-invoices" icon={<Receipt size={18} />} label="Hóa đơn đầu vào" collapsed={collapsed} />
+          {/* Thiết lập HĐ đầu vào */}
+          <SideNavLink
+            to="/purchase-invoice-settings"
+            icon={<Settings size={18} />}
+            label="Thiết lập HĐ đầu vào"
+            collapsed={collapsed}
+          />
 
           {/* Người dùng */}
           <SideNavLink to="/users" icon={<Users size={18} />} label="Người dùng" collapsed={collapsed} />
