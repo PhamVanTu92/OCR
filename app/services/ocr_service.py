@@ -20,8 +20,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-
+# NOTE: configure() được gọi lại mỗi khi dùng để luôn đọc key mới nhất
 SUPPORTED_MIME: dict[str, str] = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -37,6 +36,9 @@ _OCR_PROMPT = (
 
 
 def _model() -> genai.GenerativeModel:
+    key = settings.GEMINI_API_KEY
+    logger.info("Gemini key prefix: %s...", key[:12] if key else "(empty)")
+    genai.configure(api_key=key)
     return genai.GenerativeModel(settings.GEMINI_MODEL)
 
 

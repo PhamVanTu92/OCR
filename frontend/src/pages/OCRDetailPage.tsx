@@ -57,11 +57,25 @@ export default function OCRDetailPage() {
   const [exportLogs,     setExportLogs]      = useState<ExportLogResponse[]>([])
   const [logsExpanded,   setLogsExpanded]    = useState(false)
 
+  // ── Per-table pagination ─────────────────────────────────────────────────────
+  const [tablePagination, setTablePagination] =
+    useState<Record<string, { page: number; pageSize: number }>>({})
+
+  const getTablePg = (key: string) =>
+    tablePagination[key] ?? { page: 1, pageSize: 20 }
+
+  const setTablePg = (key: string, patch: Partial<{ page: number; pageSize: number }>) =>
+    setTablePagination(prev => {
+      const cur = prev[key] ?? { page: 1, pageSize: 20 }
+      return { ...prev, [key]: { ...cur, ...patch } }
+    })
+
   const blobRef = useRef<string | null>(null)
 
   // ── Load ─────────────────────────────────────────────────────────────────────
   const load = async (docId: number) => {
     setLoading(true); setError('')
+    setTablePagination({})
     try {
       const { data } = await ocrApi.get(docId)
       setDoc(data)
@@ -479,6 +493,16 @@ export default function OCRDetailPage() {
                     : rowsArr.length > 0 ? Object.keys(rowsArr[0]) : []
                   if (!cols.length && !editMode) return null
 
+                  const { page: tPage, pageSize: tPageSize } = getTablePg(tableKey)
+                  const activeRows  = editMode ? (editTables[tableKey] ?? []) : rowsArr
+                  const totalRows   = activeRows.length
+                  const totalPages  = Math.max(1, Math.ceil(totalRows / tPageSize))
+                  const safePage    = Math.min(tPage, totalPages)
+                  const pagedRows   = activeRows.slice(
+                    (safePage - 1) * tPageSize,
+                    safePage * tPageSize,
+                  )
+
                   return (
                     <section key={tableKey}>
                       <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
@@ -487,56 +511,92 @@ export default function OCRDetailPage() {
                           ({editMode ? editTables[tableKey]?.length ?? 0 : rowsArr.length} dòng)
                         </span>
                       </p>
-                      <div className="border border-gray-200 rounded-lg overflow-hidden overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="bg-gray-50 border-b border-gray-200">
-                              <th className="px-3 py-2 text-xs font-semibold text-gray-400 w-9">#</th>
-                              {cols.map(col => (
-                                <th key={col}
-                                  className="px-3 py-2 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
-                                  {tInfo?.cols[col] || col}
-                                </th>
-                              ))}
-                              {editMode && <th className="w-9"/>}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {(editMode ? editTables[tableKey] ?? [] : rowsArr).map((row, ri) => (
-                              <tr key={ri} className={`hover:bg-gray-50 transition-colors ${editMode ? 'group' : ''}`}>
-                                <td className="px-3 py-2 text-xs text-gray-400 text-center">{ri + 1}</td>
+
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        {/* Scrollable area with sticky header */}
+                        <div className="overflow-auto max-h-[360px]">
+                          <table className="w-full text-sm">
+                            <thead className="sticky top-0 z-10">
+                              <tr className="bg-gray-50 border-b border-gray-200">
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-400 w-9">#</th>
                                 {cols.map(col => (
-                                  <td key={col} className="px-2 py-1.5">
-                                    {editMode ? (
-                                      <input
-                                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs
-                                          focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white min-w-[80px]"
-                                        value={(row as Record<string, string>)[col] ?? ''}
-                                        onChange={e => patchCell(tableKey, ri, col, e.target.value)}
-                                      />
-                                    ) : (
-                                      <span className="text-gray-700 whitespace-nowrap">
-                                        {(row as Record<string, unknown>)[col] === null
-                                          || (row as Record<string, unknown>)[col] === undefined
-                                          || (row as Record<string, unknown>)[col] === ''
-                                          ? <span className="text-gray-300 italic">–</span>
-                                          : String((row as Record<string, unknown>)[col])}
-                                      </span>
-                                    )}
-                                  </td>
+                                  <th key={col}
+                                    className="px-3 py-2 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                                    {tInfo?.cols[col] || col}
+                                  </th>
                                 ))}
-                                {editMode && (
-                                  <td className="px-2 py-1.5 text-center">
-                                    <button onClick={() => deleteRow(tableKey, ri)}
-                                      className="text-gray-300 hover:text-red-500 transition-colors">
-                                      <Trash2 size={13}/>
-                                    </button>
-                                  </td>
-                                )}
+                                {editMode && <th className="w-9"/>}
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {pagedRows.map((row, ri) => {
+                                const actualRi = (safePage - 1) * tPageSize + ri
+                                return (
+                                  <tr key={actualRi}
+                                    className={`hover:bg-gray-50 transition-colors ${editMode ? 'group' : ''}`}>
+                                    <td className="px-3 py-2 text-xs text-gray-400 text-center">
+                                      {actualRi + 1}
+                                    </td>
+                                    {cols.map(col => (
+                                      <td key={col} className="px-2 py-1.5">
+                                        {editMode ? (
+                                          <input
+                                            className="w-full border border-gray-200 rounded px-2 py-1 text-xs
+                                              focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white min-w-[80px]"
+                                            value={(row as Record<string, string>)[col] ?? ''}
+                                            onChange={e => patchCell(tableKey, actualRi, col, e.target.value)}
+                                          />
+                                        ) : (
+                                          <span className="text-gray-700 whitespace-nowrap">
+                                            {(row as Record<string, unknown>)[col] === null
+                                              || (row as Record<string, unknown>)[col] === undefined
+                                              || (row as Record<string, unknown>)[col] === ''
+                                              ? <span className="text-gray-300 italic">–</span>
+                                              : String((row as Record<string, unknown>)[col])}
+                                          </span>
+                                        )}
+                                      </td>
+                                    ))}
+                                    {editMode && (
+                                      <td className="px-2 py-1.5 text-center">
+                                        <button onClick={() => deleteRow(tableKey, actualRi)}
+                                          className="text-gray-300 hover:text-red-500 transition-colors">
+                                          <Trash2 size={13}/>
+                                        </button>
+                                      </td>
+                                    )}
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Pagination bar */}
+                        {totalRows > tPageSize && (
+                          <div className="flex items-center justify-between px-3 py-2
+                            border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+                            <span>
+                              {(safePage - 1) * tPageSize + 1}–{Math.min(safePage * tPageSize, totalRows)}
+                              {' / '}{totalRows} dòng
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setTablePg(tableKey, { page: safePage - 1 })}
+                                disabled={safePage <= 1}
+                                className="px-2 py-0.5 rounded border border-gray-200 hover:bg-gray-100
+                                  disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >‹</button>
+                              <span className="px-2 tabular-nums">{safePage} / {totalPages}</span>
+                              <button
+                                onClick={() => setTablePg(tableKey, { page: safePage + 1 })}
+                                disabled={safePage >= totalPages}
+                                className="px-2 py-0.5 rounded border border-gray-200 hover:bg-gray-100
+                                  disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >›</button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Add row button */}

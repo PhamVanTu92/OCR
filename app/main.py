@@ -41,7 +41,14 @@ def _run_column_migrations() -> None:
         ("integration_configs", "sap_company_db",      "NVARCHAR(200) NULL"),
         ("integration_configs", "sap_base_url",        "NVARCHAR(500) NULL"),
         # Purchase invoice – rename matbao_token → matbao_api_key
-        ("purchase_invoice_configs", "matbao_api_key", "NVARCHAR(MAX) NULL"),
+        ("purchase_invoice_configs", "matbao_api_key",  "NVARCHAR(MAX) NULL"),
+        # SAP B1 integration fields on config
+        ("purchase_invoice_configs", "sap_base_url",    "NVARCHAR(500) NULL"),
+        ("purchase_invoice_configs", "sap_company_db",  "NVARCHAR(200) NULL"),
+        ("purchase_invoice_configs", "sap_username",    "NVARCHAR(100) NULL"),
+        ("purchase_invoice_configs", "sap_password",    "NVARCHAR(MAX) NULL"),
+        # External API source category
+        ("purchase_invoice_api_sources", "category",   "NVARCHAR(20)  NULL"),
     ]
     # ── Đổi VARCHAR → NVARCHAR cho purchase_invoice_configs ──────────────────
     # SQL Server: ALTER COLUMN không hỗ trợ DEFAULT inline → chỉ đổi kiểu dữ liệu

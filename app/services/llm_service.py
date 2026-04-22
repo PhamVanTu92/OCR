@@ -32,8 +32,6 @@ from app.models.document_type import DocumentType
 
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-
 
 # ─── Schema builder ──────────────────────────────────────────────────────────
 
@@ -125,6 +123,9 @@ Yêu cầu:
 - Tất cả số tiền, số lượng phải là kiểu number (không có dấu phân cách nghìn).
 """
 
+    key = settings.GEMINI_API_KEY
+    logger.info("Gemini key prefix: %s...", key[:12] if key else "(empty)")
+    genai.configure(api_key=key)
     model = genai.GenerativeModel(settings.GEMINI_MODEL)
 
     start = time.time()

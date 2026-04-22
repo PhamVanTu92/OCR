@@ -251,6 +251,9 @@ export interface PurchaseInvoiceConfig {
   name:             string
   matbao_base_url:  string
   matbao_api_key:   string | null
+  sap_base_url:     string | null
+  sap_company_db:   string | null
+  sap_username:     string | null
   is_active:        boolean
   created_at:       string | null
   updated_at:       string | null
@@ -293,6 +296,7 @@ export interface PurchaseInvoiceItem {
   // Người bán
   NBanTen?:      string
   NBanMST?:      string
+  NBanMa?:       string   // Mã người bán (trong hệ thống người mua)
   NBanDChi?:     string
   NBanSDT?:      string
   // Người mua
@@ -313,6 +317,8 @@ export interface PurchaseInvoiceItem {
   KQKiemTraHDon?:    string
   NguonUpload?:      string
   NgayImport?:       string
+  // SAP (bổ sung từ backend)
+  SupplierCode?:     string | null
   // Kiểm tra hợp lệ
   KTra?:         PurchaseInvoiceKTra
   // Links
@@ -323,15 +329,113 @@ export interface PurchaseInvoiceItem {
 }
 
 export interface PurchaseInvoiceLineItem {
-  STT?:     number
-  MHHDVu?:  string
-  THHDVu?:  string
-  DVTinh?:  string
-  SLuong?:  number
-  DGia?:    number
-  ThTien?:  number
-  TSuat?:   string | number
-  TLCKhau?: number
-  STCKhau?: number
+  STT?:      number
+  MHHDVu?:   string
+  THHDVu?:   string
+  DVTinh?:   string
+  SLuong?:   number
+  DGia?:     number
+  ThTien?:   number
+  TSuat?:    string | number
+  TLCKhau?:  number
+  STCKhau?:  number
+  // SAP integration fields (editable / auto-fill from External API)
+  ItemCode?: string | null   // SAP – Mã hàng hóa
+  ItemName?: string | null   // SAP – Tên hàng hóa
+  UomId?:    string | null   // SAP – Mã đơn vị tính
+  TaxCode?:  string | null   // SAP – Mã thuế
+}
+
+// ─── Supplier mapping ─────────────────────────────────────────────────────────
+export interface SupplierMapping {
+  id:            number
+  tax_code:      string
+  supplier_code: string
+  supplier_name: string | null
+  created_at:    string | null
+  updated_at:    string | null
+}
+
+// ─── Product mapping ──────────────────────────────────────────────────────────
+export interface ProductMapping {
+  id:            number
+  product_name:  string
+  material_code: string | null
+  unit_code:     string | null
+  tax_code_sap:  string | null
+  created_at:    string | null
+  updated_at:    string | null
+}
+
+// ─── Saved invoice record ─────────────────────────────────────────────────────
+export interface SavedInvoice {
+  id:               number
+  inv_id:           string
+  inv_no:           string | null
+  khhd:             string | null
+  inv_date:         string | null
+  seller_tax_code:  string | null
+  seller_name:      string | null
+  buyer_tax_code:   string | null
+  buyer_name:       string | null
+  total_before_tax: number | null
+  total_tax:        number | null
+  total_amount:     number | null
+  kq_phan_tich:     string | null
+  tthai:            number | null
+  supplier_code:    string | null
+  reference_po:     string | null
+  created_at:       string | null
+  updated_at:       string | null
+}
+
+// ─── SAP Open PO ──────────────────────────────────────────────────────────────
+export interface SapOpenPO {
+  PONumber:    string
+  DocDate?:    string
+  Vendor?:     string
+  VendorName?: string
+  TotalAmount?: number
+  Currency?:   string
+  Items?:      SapPOItem[]
+}
+
+// ─── External API Source ──────────────────────────────────────────────────────
+export interface ApiFieldMapping {
+  api_field: string
+  label:     string
+  ocr_field: string | null
+}
+
+export interface ExternalApiSource {
+  id:              number
+  name:            string
+  description:     string | null
+  base_url:        string
+  select_fields:   string | null
+  filter_template: string | null
+  extra_params:    string | null
+  field_mappings:  ApiFieldMapping[]
+  use_sap_auth:    boolean
+  category:        string | null   // null=manual | 'seller'=auto người bán | 'line_item'=auto dòng hàng
+  is_active:       boolean
+  created_at:      string | null
+  updated_at:      string | null
+}
+
+export interface InvokeApiSourceResult {
+  success:    boolean
+  data:       Record<string, unknown>[]
+  count:      number
+  url_called: string
+}
+
+export interface SapPOItem {
+  POItem?:      string
+  Material?:    string
+  Description?: string
+  Quantity?:    number
+  Unit?:        string
+  NetPrice?:    number
 }
 
