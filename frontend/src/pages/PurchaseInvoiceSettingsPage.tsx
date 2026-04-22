@@ -137,15 +137,18 @@ function ExternalApiSection() {
     [fUrl, fSelect, fFilter, fExtra],
   )
 
-  // $filter placeholders: always header fields (API called once with invoice header context)
+  // $filter placeholders: header always; line_item fields thêm khi category = line_item
   const placeholderGroups = useMemo(() => {
+    const list = fCategory === 'line_item'
+      ? [...HEADER_PLACEHOLDERS, ...LINE_ITEM_PLACEHOLDERS]
+      : HEADER_PLACEHOLDERS
     const groups: Record<string, typeof HEADER_PLACEHOLDERS> = {}
-    HEADER_PLACEHOLDERS.forEach(p => {
+    list.forEach(p => {
       if (!groups[p.group]) groups[p.group] = []
       groups[p.group].push(p)
     })
     return groups
-  }, [])
+  }, [fCategory])
 
   const load = () => {
     setLoading(true)
@@ -305,7 +308,10 @@ function ExternalApiSection() {
               className={`${inputCls} font-mono text-xs`} />
             <div className="mt-2 space-y-1.5">
               <span className="text-[11px] text-gray-400 font-medium">
-                Placeholder khả dụng (context hóa đơn – áp dụng cho mọi category):
+                Placeholder khả dụng
+                {fCategory === 'line_item'
+                  ? ' (header hóa đơn + từng dòng hàng – gọi API mỗi dòng):'
+                  : ' (context hóa đơn – gọi API 1 lần):'}
               </span>
               {Object.entries(placeholderGroups).map(([group, fields]) => (
                 <div key={group} className="flex flex-wrap gap-1 items-center">

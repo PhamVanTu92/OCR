@@ -464,7 +464,8 @@ export interface DocTypeApiSource {
   extra_params:     string | null
   field_mappings:   ApiFieldMapping[]
   use_sap_auth:     boolean
-  category:         string | null   // null=manual | 'seller' | 'line_item'
+  category:         string | null   // null=manual | 'header' | 'line_item'
+  source_table_key: string | null   // which table to iterate (when category=line_item)
   is_active:        boolean
   created_at:       string | null
   updated_at:       string | null

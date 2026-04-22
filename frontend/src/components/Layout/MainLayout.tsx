@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Building2, FileText, ScanLine, LogOut,
   ChevronLeft, Menu, ChevronDown, ChevronRight, Folder,
-  Users, ShieldCheck, Receipt, Settings,
+  Users, ShieldCheck, Receipt, Settings, CheckCircle2,
 } from 'lucide-react'
 import { docTypeApi } from '../../api/documentTypes'
 import type { DocumentCategory, DocumentType } from '../../types'
@@ -57,15 +57,17 @@ export default function MainLayout() {
   const { user, logout } = useAuth()
   const location         = useLocation()
 
-  const [collapsed,   setCollapsed]   = useState(false)
-  const [ocrOpen,     setOcrOpen]     = useState(false)
-  const [openCats,    setOpenCats]    = useState<Set<number>>(new Set())
+  const [collapsed,      setCollapsed]      = useState(false)
+  const [ocrOpen,        setOcrOpen]        = useState(false)
+  const [invoiceOpen,    setInvoiceOpen]    = useState(false)
+  const [openCats,       setOpenCats]       = useState<Set<number>>(new Set())
   const [categories,  setCategories]  = useState<DocumentCategory[]>([])
   const [docTypes,    setDocTypes]    = useState<DocumentType[]>([])
 
-  // Auto-expand OCR tree when navigating to /ocr
+  // Auto-expand trees based on current path
   useEffect(() => {
-    if (location.pathname.startsWith('/ocr')) setOcrOpen(true)
+    if (location.pathname.startsWith('/ocr'))              setOcrOpen(true)
+    if (location.pathname.startsWith('/purchase-invoices')) setInvoiceOpen(true)
   }, [location.pathname])
 
   // Load categories + doc types once
@@ -92,7 +94,8 @@ export default function MainLayout() {
       return next
     })
 
-  const isOcrActive = location.pathname.startsWith('/ocr')
+  const isOcrActive     = location.pathname.startsWith('/ocr')
+  const isInvoiceActive = location.pathname.startsWith('/purchase-invoices')
 
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden">
@@ -196,13 +199,56 @@ export default function MainLayout() {
             )}
           </div>
 
-          {/* ── Xử lý hóa đơn đầu vào ────────────────────────────────── */}
-          <SideNavLink
-            to="/purchase-invoices"
-            icon={<Receipt size={18} />}
-            label="Xử lý HĐ đầu vào"
-            collapsed={collapsed}
-          />
+          {/* ── Xử lý hóa đơn đầu vào – expandable ──────────────────── */}
+          <div>
+            <button
+              onClick={() => !collapsed && setInvoiceOpen(o => !o)}
+              className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors
+                ${isInvoiceActive
+                  ? 'bg-indigo-50 text-indigo-600 font-medium'
+                  : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <Receipt size={18} className="shrink-0" />
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">Xử lý HĐ đầu vào</span>
+                  {invoiceOpen
+                    ? <ChevronDown  size={14} className="opacity-60" />
+                    : <ChevronRight size={14} className="opacity-60" />}
+                </>
+              )}
+            </button>
+
+            {!collapsed && invoiceOpen && (
+              <div className="mt-1 ml-7 space-y-0.5 border-l border-gray-100 pl-2">
+                <NavLink
+                  to="/purchase-invoices"
+                  end
+                  className={({ isActive }) =>
+                    `flex items-center gap-2 py-1.5 px-2 rounded text-xs transition-colors
+                    ${isActive
+                      ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                      : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`
+                  }
+                >
+                  <span className="w-1 h-1 rounded-full bg-current opacity-50 shrink-0" />
+                  Danh sách hóa đơn TCT
+                </NavLink>
+                <NavLink
+                  to="/purchase-invoices/saved"
+                  className={({ isActive }) =>
+                    `flex items-center gap-2 py-1.5 px-2 rounded text-xs transition-colors
+                    ${isActive
+                      ? 'bg-green-50 text-green-600 font-semibold'
+                      : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`
+                  }
+                >
+                  <CheckCircle2 size={10} className="shrink-0 opacity-70" />
+                  Danh sách đã xử lý
+                </NavLink>
+              </div>
+            )}
+          </div>
 
           {/* Divider – Quản trị hệ thống */}
           {!collapsed && (

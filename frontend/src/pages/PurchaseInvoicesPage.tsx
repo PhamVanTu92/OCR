@@ -3,11 +3,11 @@ import {
   Search, X, Download, Eye,
   AlertCircle, FileText, Receipt, ExternalLink, Loader2,
   BadgeCheck, BadgeX, Building2, User, CalendarRange,
-  Hash, SlidersHorizontal, Zap, ChevronDown,
+  Hash, SlidersHorizontal, Zap, ChevronDown, Save, CheckCircle2,
 } from 'lucide-react'
 import { purchaseInvoiceApi, type InvoiceListParams } from '../api/purchaseInvoices'
 import type {
-  PurchaseInvoiceItem, PurchaseInvoiceLineItem, ExternalApiSource,
+  PurchaseInvoiceItem, PurchaseInvoiceLineItem, ExternalApiSource, SavedInvoice,
 } from '../types'
 import Pagination from '../components/Pagination'
 
@@ -101,12 +101,15 @@ function SapCell({
 }
 
 // ─── Detail drawer ────────────────────────────────────────────────────────────
-function InvoiceDetailDrawer({
-  invoice, apiSources, onClose,
+export function InvoiceDetailDrawer({
+  invoice, apiSources, savedInvIds, onSaved, onClose, disableAutoFill = false,
 }: {
   invoice: PurchaseInvoiceItem
   apiSources: ExternalApiSource[]
+  savedInvIds: Set<string>
+  onSaved: (inv: SavedInvoice) => void
   onClose: () => void
+  disableAutoFill?: boolean   // true khi xem hóa đơn đã lưu – không gọi lại API ngoài
 }) {
   const inv  = invoice
   const ktra = inv.KTra
@@ -125,9 +128,12 @@ function InvoiceDetailDrawer({
     }))
     setEditLines(mapped)
     setSellerApiData({})
-    // Auto-fill from category sources
-    runAutoFillLines(mapped, apiSources)
-    runAutoFillSeller(apiSources)
+    setEditInvFields({})
+    // Auto-fill chỉ chạy khi KHÔNG ở chế độ xem lại hóa đơn đã lưu
+    if (!disableAutoFill) {
+      runAutoFillLines(apiSources, mapped)
+      runAutoFillSeller(apiSources)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inv.InvID])
 
@@ -138,6 +144,8 @@ function InvoiceDetailDrawer({
   const [autoFillingLines,  setAutoFillingLines]  = useState(false)
   const [sellerApiData,     setSellerApiData]      = useState<Record<string, string>>({})
   const [autoFillingSeller, setAutoFillingSeller]  = useState(false)
+  // Các trường header được fill từ seller API (NBanMa, SupplierCode…) → gộp vào khi lưu
+  const [editInvFields, setEditInvFields] = useState<Partial<PurchaseInvoiceItem>>({})
   const [linesPickerOpen,   setLinesPickerOpen]    = useState(false)
   const [manualFillingId,   setManualFillingId]    = useState<number | null>(null)
   const [linesFillMsg,      setLinesFillMsg]       = useState<{ ok: boolean; msg: string } | null>(null)
@@ -170,24 +178,45 @@ function InvoiceDetailDrawer({
     HTTToan:  inv.HTTToan  ?? null,
   })
 
-  // ── Apply one API source result (list) to lines by index ──────────────────────
+  // ── Line context (header + fields của từng dòng) ──────────────────────────────
+  const _lineCtx = (line: PurchaseInvoiceLineItem): Record<string, string | null> => ({
+    ..._headerCtx(),
+    MHHDVu:  line.MHHDVu  ?? null,
+    THHDVu:  line.THHDVu  ?? null,
+    DVTinh:  line.DVTinh  ?? null,
+    SLuong:  line.SLuong  != null ? String(line.SLuong) : null,
+    DGia:    line.DGia    != null ? String(line.DGia)   : null,
+    TSuat:   line.TSuat   != null ? String(line.TSuat)  : null,
+    ItemCode: line.ItemCode ?? null,
+    ItemName: line.ItemName ?? null,
+    UomId:   line.UomId   ?? null,
+    TaxCode: line.TaxCode  ?? null,
+  })
+
+  // ── Apply one API response row to a single line ───────────────────────────────
+  const _applyRowToLine = (
+    line: PurchaseInvoiceLineItem,
+    row: Record<string, unknown>,
+    src: ExternalApiSource,
+  ): PurchaseInvoiceLineItem => {
+    const upd: Partial<PurchaseInvoiceLineItem> = {}
+    src.field_mappings.forEach(m => {
+      const val = row[m.api_field]
+      if (val != null && m.ocr_field)
+        (upd as Record<string, unknown>)[m.ocr_field] = String(val)
+    })
+    return { ...line, ...upd }
+  }
+
+  // ── Apply list result to lines by index (fallback cho source không dùng line ctx) ─
   const _applyRowsToLines = (
     lines: PurchaseInvoiceLineItem[],
     rows: Record<string, unknown>[],
     src: ExternalApiSource,
   ): PurchaseInvoiceLineItem[] =>
-    lines.map((line, i) => {
-      if (i >= rows.length) return line
-      const upd: Partial<PurchaseInvoiceLineItem> = {}
-      src.field_mappings.forEach(m => {
-        const val = rows[i][m.api_field]
-        if (val != null && m.ocr_field)
-          (upd as Record<string, unknown>)[m.ocr_field] = String(val)
-      })
-      return { ...line, ...upd }
-    })
+    lines.map((line, i) => i < rows.length ? _applyRowToLine(line, rows[i], src) : line)
 
-  // ── Auto-fill lines: all 'line_item' sources, called ONCE each ────────────────
+  // ── Auto-fill lines: line_item sources → gọi API từng dòng với line context ────
   const runAutoFillLines = async (sources: ExternalApiSource[], linesInit?: PurchaseInvoiceLineItem[]) => {
     const targets = sources.filter(s => s.is_active && s.category === 'line_item')
     if (targets.length === 0) return
@@ -195,10 +224,18 @@ function InvoiceDetailDrawer({
     try {
       let merged = [...(linesInit ?? editLines)]
       for (const src of targets) {
-        try {
-          const r = await purchaseInvoiceApi.invokeApiSource(src.id, _headerCtx())
-          if (r.data.data?.length) merged = _applyRowsToLines(merged, r.data.data, src)
-        } catch { /* ignore per-source error */ }
+        // gọi song song cho tất cả dòng, mỗi dòng dùng context riêng
+        const results = await Promise.allSettled(
+          merged.map(line => purchaseInvoiceApi.invokeApiSource(src.id, _lineCtx(line)))
+        )
+        merged = merged.map((line, i) => {
+          const res = results[i]
+          if (res.status === 'fulfilled') {
+            const rows = res.value.data.data
+            if (rows?.length) return _applyRowToLine(line, rows[0], src)
+          }
+          return line
+        })
       }
       setEditLines(merged)
     } finally {
@@ -227,13 +264,14 @@ function InvoiceDetailDrawer({
     }
   }
 
-  // ── Auto-fill seller panel: all 'seller' sources, called ONCE each ────────────
+  // ── Auto-fill seller: gọi ONCE, apply ocr_field về editInvFields + hiển thị panel ─
   const runAutoFillSeller = async (sources: ExternalApiSource[]) => {
     const targets = sources.filter(s => s.is_active && s.category === 'seller')
     if (targets.length === 0) return
     setAutoFillingSeller(true)
     try {
-      const merged: Record<string, string> = {}
+      const display: Record<string, string> = {}
+      const fields:  Partial<PurchaseInvoiceItem> = {}
       for (const src of targets) {
         try {
           const r = await purchaseInvoiceApi.invokeApiSource(src.id, _headerCtx())
@@ -241,18 +279,48 @@ function InvoiceDetailDrawer({
           if (rows?.length) {
             src.field_mappings.forEach(m => {
               const val = rows[0][m.api_field]
-              if (val != null) merged[m.label || m.api_field] = String(val)
+              if (val != null) {
+                display[m.label || m.api_field] = String(val)
+                // Apply về invoice field nếu có ocr_field (vd: NBanMa, SupplierCode)
+                if (m.ocr_field)
+                  (fields as Record<string, unknown>)[m.ocr_field] = String(val)
+              }
             })
           }
         } catch { /* ignore per-source error */ }
       }
-      setSellerApiData(merged)
+      setSellerApiData(display)
+      if (Object.keys(fields).length)
+        setEditInvFields(prev => ({ ...prev, ...fields }))
     } finally {
       setAutoFillingSeller(false)
     }
   }
 
-  const activeApiSources = apiSources.filter(s => s.is_active)
+  // ── Save invoice ─────────────────────────────────────────────────────────────
+  const [saving,   setSaving]   = useState(false)
+  const [saveMsg,  setSaveMsg]  = useState<{ ok: boolean; msg: string } | null>(null)
+  const isSaved = inv.InvID ? savedInvIds.has(inv.InvID) : false
+  // Đủ dữ liệu để lưu: có InvID và ít nhất số HĐ hoặc MST người bán
+  const canSave = !!(inv.InvID && (inv.SHDon || inv.NBanMST))
+
+  const handleSave = async () => {
+    if (!canSave) return
+    setSaving(true); setSaveMsg(null)
+    try {
+      const r = await purchaseInvoiceApi.saveInvoice({ ...inv, ...editInvFields, DSHHDVu: editLines })
+      onSaved(r.data)
+      setSaveMsg({ ok: true, msg: 'Đã lưu hóa đơn thành công' })
+    } catch (e: unknown) {
+      setSaveMsg({ ok: false, msg: (e as Err)?.response?.data?.detail ?? 'Lưu thất bại' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const activeApiSources  = apiSources.filter(s => s.is_active)
+  // Ở chế độ disableAutoFill (xem lại HĐ đã lưu) → ẩn picker, không gọi API ngoài
+  const manualApiSources  = disableAutoFill ? [] : activeApiSources.filter(s => !s.category)
 
   return (
     <>
@@ -395,8 +463,8 @@ function InvoiceDetailDrawer({
                     Hàng hóa / Dịch vụ
                     <span className="text-indigo-500">({editLines.length} dòng)</span>
                   </h3>
-                  {/* Section-level ⚡ picker */}
-                  {activeApiSources.length > 0 && (
+                  {/* Section-level ⚡ picker — chỉ hiện khi có source thủ công */}
+                  {manualApiSources.length > 0 && (
                     <div className="relative" ref={linesPickerRef}>
                       <button
                         onClick={() => setLinesPickerOpen(v => !v)}
@@ -416,18 +484,11 @@ function InvoiceDetailDrawer({
                           <p className="px-3 py-1.5 text-[10px] text-gray-400 font-semibold uppercase tracking-wide border-b">
                             Chọn API nguồn (áp dụng toàn bộ dòng)
                           </p>
-                          {activeApiSources.map(src => (
+                          {manualApiSources.map(src => (
                             <button key={src.id}
                               onClick={() => handleFillAllLines(src.id)}
-                              className="w-full text-left px-3 py-2 text-xs hover:bg-amber-50 text-gray-700 leading-snug">
-                              <div className="font-medium flex items-center gap-1.5">
-                                {src.category === 'line_item'
-                                  ? <span className="text-[10px] text-amber-400 font-mono">⚡auto</span>
-                                  : src.category === 'seller'
-                                    ? <span className="text-[10px] text-violet-400 font-mono">seller</span>
-                                    : null}
-                                {src.name}
-                              </div>
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 text-gray-700 leading-snug">
+                              <div className="font-medium">{src.name}</div>
                               {src.description && (
                                 <div className="text-[10px] text-gray-400">{src.description}</div>
                               )}
@@ -609,6 +670,36 @@ function InvoiceDetailDrawer({
             )}
 
           </div>
+
+          {/* ── Sticky footer – nút Lưu ───────────────────────────────────── */}
+          <div className="shrink-0 border-t px-6 py-3 bg-gray-50/80 flex items-center gap-3">
+            {isSaved ? (
+              <div className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
+                <CheckCircle2 size={14} />
+                Đã lưu vào danh sách xử lý
+              </div>
+            ) : (
+              <button
+                onClick={handleSave}
+                disabled={!canSave || saving}
+                title={!canSave ? 'Cần có InvID và số HĐ hoặc MST người bán' : 'Lưu hóa đơn vào danh sách đã xử lý'}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                  disabled:opacity-40 disabled:cursor-not-allowed
+                  bg-indigo-600 text-white hover:bg-indigo-700 disabled:hover:bg-indigo-600">
+                {saving
+                  ? <><Loader2 size={13} className="animate-spin" /> Đang lưu...</>
+                  : <><Save size={13} /> Lưu hóa đơn</>}
+              </button>
+            )}
+            {saveMsg && (
+              <div className={`flex items-center gap-1.5 text-xs flex-1
+                ${saveMsg.ok ? 'text-green-600' : 'text-red-500'}`}>
+                {saveMsg.ok ? '✓' : '✗'} {saveMsg.msg}
+                <button className="ml-auto text-gray-400 hover:text-gray-600"
+                  onClick={() => setSaveMsg(null)}><X size={10} /></button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -627,17 +718,24 @@ export default function PurchaseInvoicesPage() {
   const [selected,  setSelected]  = useState<PurchaseInvoiceItem | null>(null)
   const [showFilter, setShowFilter] = useState(true)
 
-  // API sources (for drawer)
-  const [apiSources, setApiSources] = useState<ExternalApiSource[]>([])
+  // API sources + saved invoice IDs (for drawer)
+  const [apiSources,   setApiSources]   = useState<ExternalApiSource[]>([])
+  const [savedInvIds,  setSavedInvIds]  = useState<Set<string>>(new Set())
 
   // Phân trang
   const [page,     setPage]     = useState(1)
   const [pageSize, setPageSize] = useState(20)
 
+  // Lọc bỏ HĐ đã xử lý (đã lưu) khỏi danh sách TCT
+  const unprocessed = useMemo(
+    () => invoices.filter(inv => !inv.InvID || !savedInvIds.has(inv.InvID)),
+    [invoices, savedInvIds],
+  )
+
   const paged = useMemo(() => {
     const start = (page - 1) * pageSize
-    return invoices.slice(start, start + pageSize)
-  }, [invoices, page, pageSize])
+    return unprocessed.slice(start, start + pageSize)
+  }, [unprocessed, page, pageSize])
 
   // Bộ lọc
   const [fromDate,   setFromDate]   = useState(monthAgo)
@@ -649,10 +747,13 @@ export default function PurchaseInvoicesPage() {
   const [serial,     setSerial]     = useState('')
   const [trangthai,  setTrangthai]  = useState(-1)
 
-  // Load API sources once
+  // Load API sources + saved IDs once
   useEffect(() => {
     purchaseInvoiceApi.listApiSources()
       .then(r => setApiSources(r.data))
+      .catch(() => { /* non-critical */ })
+    purchaseInvoiceApi.listSaved()
+      .then(r => setSavedInvIds(new Set(r.data.map(s => s.inv_id))))
       .catch(() => { /* non-critical */ })
   }, [])
 
@@ -698,9 +799,14 @@ export default function PurchaseInvoicesPage() {
         <div className="flex items-center justify-between px-5 py-3.5 border-b flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Receipt size={17} className="text-indigo-500" />
-            <span className="font-semibold text-gray-700 text-sm">Danh sách hóa đơn đầu vào</span>
-            {!loading && invoices.length > 0 && (
-              <span className="text-xs text-gray-400 font-normal">({invoices.length} hóa đơn)</span>
+            <span className="font-semibold text-gray-700 text-sm">Danh sách hóa đơn TCT</span>
+            {!loading && unprocessed.length > 0 && (
+              <span className="text-xs text-gray-400 font-normal">
+                ({unprocessed.length} hóa đơn
+                {invoices.length > unprocessed.length
+                  ? `, đã ẩn ${invoices.length - unprocessed.length} đã xử lý`
+                  : ''})
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -782,10 +888,14 @@ export default function PurchaseInvoicesPage() {
           <div className="flex items-center justify-center h-48 text-gray-400 gap-2">
             <Loader2 size={20} className="animate-spin" /> Đang tải hóa đơn...
           </div>
-        ) : invoices.length === 0 ? (
+        ) : unprocessed.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-52 text-gray-400 gap-2">
             <Receipt size={36} className="opacity-20" />
-            <p className="text-sm">Chưa có dữ liệu — nhấn <strong className="text-indigo-600">Tìm kiếm</strong> để tải</p>
+            <p className="text-sm">
+              {invoices.length === 0
+                ? <>Chưa có dữ liệu — nhấn <strong className="text-indigo-600">Tìm kiếm</strong> để tải</>
+                : 'Tất cả hóa đơn đã được xử lý'}
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -883,9 +993,9 @@ export default function PurchaseInvoicesPage() {
         )}
 
         {/* Phân trang */}
-        {!loading && invoices.length > 0 && (
+        {!loading && unprocessed.length > 0 && (
           <Pagination
-            total={invoices.length}
+            total={unprocessed.length}
             page={page}
             pageSize={pageSize}
             onPageChange={setPage}
@@ -900,6 +1010,8 @@ export default function PurchaseInvoicesPage() {
         <InvoiceDetailDrawer
           invoice={selected}
           apiSources={apiSources}
+          savedInvIds={savedInvIds}
+          onSaved={saved => setSavedInvIds(prev => new Set([...prev, saved.inv_id]))}
           onClose={() => setSelected(null)}
         />
       )}

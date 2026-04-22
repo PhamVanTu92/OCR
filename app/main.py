@@ -50,8 +50,8 @@ def _run_column_migrations() -> None:
         ("purchase_invoice_configs", "sap_password",    "NVARCHAR(MAX) NULL"),
         # External API source category
         ("purchase_invoice_api_sources", "category",   "NVARCHAR(20)  NULL"),
-        # Per-doc-type SAP config (tables created by SQLAlchemy; migrations only for new columns)
-        # (no new columns needed – tables created fresh by Base.metadata.create_all)
+        # Per-doc-type API sources: source_table_key column
+        ("doc_type_api_sources", "source_table_key", "NVARCHAR(100) NULL"),
     ]
     # ── Đổi VARCHAR → NVARCHAR cho purchase_invoice_configs ──────────────────
     # SQL Server: ALTER COLUMN không hỗ trợ DEFAULT inline → chỉ đổi kiểu dữ liệu

@@ -18,16 +18,17 @@ export interface TestSapLoginResponse {
 }
 
 export interface ApiSourcePayload {
-  name:            string
-  description?:    string | null
-  base_url:        string
-  select_fields?:  string | null
+  name:             string
+  description?:     string | null
+  base_url:         string
+  select_fields?:   string | null
   filter_template?: string | null
-  extra_params?:   string | null
-  field_mappings:  ApiFieldMapping[]
-  use_sap_auth:    boolean
-  category?:       string | null
-  is_active:       boolean
+  extra_params?:    string | null
+  field_mappings:   ApiFieldMapping[]
+  use_sap_auth:     boolean
+  category?:        string | null
+  source_table_key?: string | null
+  is_active:        boolean
 }
 
 export const docTypeSettingsApi = {

@@ -490,6 +490,7 @@ class SavedInvoiceResponse(BaseModel):
     tthai:            Optional[int]
     supplier_code:    Optional[str]
     reference_po:     Optional[str]
+    raw_data:         Optional[str]
     created_at:       Optional[str]
     updated_at:       Optional[str]
 
@@ -622,9 +623,13 @@ async def save_invoice(
         raise HTTPException(status_code=400, detail="InvID không được để trống")
 
     cfg = _get_config(db)
-    # Tự động tra mã NCC từ MST người bán
-    seller_mst = inv.get("NBanMST")
-    supplier_code = _lookup_supplier_code(db, seller_mst)
+    # Ưu tiên: DB mapping → NBanMa từ seller API → SupplierCode có sẵn
+    seller_mst    = inv.get("NBanMST")
+    supplier_code = (
+        _lookup_supplier_code(db, seller_mst)
+        or inv.get("NBanMa")
+        or inv.get("SupplierCode")
+    )
 
     record = db.query(SavedPurchaseInvoice).filter(
         SavedPurchaseInvoice.inv_id == inv_id
@@ -645,8 +650,8 @@ async def save_invoice(
         record.kq_phan_tich    = inv.get("KQPhanTich")
         record.tthai           = inv.get("TThai")
         record.raw_data        = json.dumps(inv, ensure_ascii=False)
-        # Chỉ cập nhật supplier_code nếu chưa có hoặc mapping mới
-        if supplier_code and not record.supplier_code:
+        # Cập nhật supplier_code nếu có giá trị mới (mapping DB > NBanMa > SupplierCode)
+        if supplier_code:
             record.supplier_code = supplier_code
     else:
         record = SavedPurchaseInvoice(

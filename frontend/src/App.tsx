@@ -10,6 +10,7 @@ import OCRDetailPage from './pages/OCRDetailPage'
 import UsersPage from './pages/UsersPage'
 import RolesPage from './pages/RolesPage'
 import PurchaseInvoicesPage from './pages/PurchaseInvoicesPage'
+import SavedInvoicesPage from './pages/SavedInvoicesPage'
 import PurchaseInvoiceSettingsPage from './pages/PurchaseInvoiceSettingsPage'
 
 const Spinner = () => (
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="ocr"            element={<OCRPage />} />
             <Route path="ocr/documents/:id" element={<OCRDetailPage />} />
             <Route path="purchase-invoices"          element={<PurchaseInvoicesPage />} />
+            <Route path="purchase-invoices/saved"   element={<SavedInvoicesPage />} />
             <Route path="purchase-invoice-settings" element={<PurchaseInvoiceSettingsPage />} />
             <Route path="users"                     element={<UsersPage />} />
             <Route path="roles"                     element={<RolesPage />} />

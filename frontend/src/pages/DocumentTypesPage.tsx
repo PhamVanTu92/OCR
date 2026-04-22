@@ -159,6 +159,7 @@ export default function DocumentTypesPage() {
 
   // Settings panel (SAP + API sources, inline per doc type)
   const [settingsDt,      setSettingsDt]      = useState<DocumentType | null>(null)
+  const [settingsDtFull,  setSettingsDtFull]  = useState<DocumentType | null>(null)  // with fields+tables
   const [settingsTab,     setSettingsTab]     = useState<'sap' | 'api'>('sap')
   const [sapCfg,          setSapCfg]          = useState<DocTypeSapConfig | null>(null)
   const [sapLoading,      setSapLoading]      = useState(false)
@@ -181,16 +182,57 @@ export default function DocumentTypesPage() {
   const [apiDeleting,     setApiDeleting]     = useState<number | null>(null)
   const [invoking,        setInvoking]        = useState<number | null>(null)
   // API source form
-  const [fName,     setFName]     = useState('')
-  const [fDesc,     setFDesc]     = useState('')
-  const [fUrl,      setFUrl]      = useState('')
-  const [fSelect,   setFSelect]   = useState('')
-  const [fFilter,   setFFilter]   = useState('')
-  const [fExtra,    setFExtra]    = useState('')
-  const [fMaps,     setFMaps]     = useState<ApiFieldMapping[]>([{ api_field: '', label: '', ocr_field: null }])
-  const [fSapAuth,  setFSapAuth]  = useState(true)
-  const [fCategory, setFCategory] = useState('')
-  const [fActive,   setFActive]   = useState(true)
+  const [fName,      setFName]     = useState('')
+  const [fDesc,      setFDesc]     = useState('')
+  const [fUrl,       setFUrl]      = useState('')
+  const [fSelect,    setFSelect]   = useState('')
+  const [fFilter,    setFFilter]   = useState('')
+  const [fExtra,     setFExtra]    = useState('')
+  const [fMaps,      setFMaps]     = useState<ApiFieldMapping[]>([{ api_field: '', label: '', ocr_field: null }])
+  const [fSapAuth,   setFSapAuth]  = useState(true)
+  const [fCategory,  setFCategory] = useState('')
+  const [fTableKey,  setFTableKey] = useState('')   // source_table_key (for line_item)
+  const [fActive,    setFActive]   = useState(true)
+
+  // Dynamic placeholders & target fields from the current doc type's schema
+  const dtFields = useMemo(() => settingsDtFull?.fields ?? [], [settingsDtFull])
+  const dtTables = useMemo(() => settingsDtFull?.tables ?? [], [settingsDtFull])
+
+  // Placeholder groups for $filter chips: always header fields + table columns when line_item
+  const placeholderGroups = useMemo(() => {
+    const groups: Record<string, { key: string; label: string }[]> = {}
+    // Header fields
+    if (dtFields.length) {
+      groups['Trường chứng từ'] = dtFields
+        .slice().sort((a, b) => a.sort_order - b.sort_order)
+        .map(f => ({ key: f.field_key, label: f.field_name }))
+    }
+    // Columns from selected table (when category = line_item)
+    if (fCategory === 'line_item' && fTableKey) {
+      const tbl = dtTables.find(t => t.table_key === fTableKey)
+      if (tbl?.columns.length) {
+        groups[`Cột bảng: ${tbl.table_name}`] = tbl.columns
+          .slice().sort((a, b) => a.sort_order - b.sort_order)
+          .map(c => ({ key: c.column_key, label: c.column_name }))
+      }
+    }
+    return groups
+  }, [dtFields, dtTables, fCategory, fTableKey])
+
+  // Target field chips for ocr_field (all fields + selected table columns)
+  const targetFields = useMemo(() => {
+    const out: { key: string; label: string; group: string }[] = []
+    dtFields
+      .slice().sort((a, b) => a.sort_order - b.sort_order)
+      .forEach(f => out.push({ key: f.field_key, label: f.field_name, group: 'Trường' }))
+    if (fCategory === 'line_item' && fTableKey) {
+      const tbl = dtTables.find(t => t.table_key === fTableKey)
+      tbl?.columns
+        .slice().sort((a, b) => a.sort_order - b.sort_order)
+        .forEach(c => out.push({ key: c.column_key, label: c.column_name, group: 'Cột bảng' }))
+    }
+    return out
+  }, [dtFields, dtTables, fCategory, fTableKey])
 
   // ── Filter + pagination ───────────────────────────────────────────────────
   const [search,      setSearch]      = useState('')
@@ -298,10 +340,13 @@ export default function DocumentTypesPage() {
 
   // ── Settings panel handlers ───────────────────────────────────────────────
   const openSettings = async (dt: DocumentType) => {
-    if (settingsDt?.id === dt.id) { setSettingsDt(null); return }
+    if (settingsDt?.id === dt.id) { setSettingsDt(null); setSettingsDtFull(null); return }
     setSettingsDt(dt)
+    setSettingsDtFull(null)
     setSettingsTab('sap')
     setSapMsg(null); setApiMsg(null)
+    // Load full doc type (fields + tables) for dynamic placeholders
+    docTypeApi.get(dt.id).then(r => setSettingsDtFull(r.data)).catch(() => {})
     // Load SAP config
     setSapLoading(true)
     try {
@@ -365,7 +410,8 @@ export default function DocumentTypesPage() {
     setEditApiSrc(null)
     setFName(''); setFDesc(''); setFUrl(''); setFSelect(''); setFFilter(''); setFExtra('')
     setFMaps([{ api_field: '', label: '', ocr_field: null }])
-    setFSapAuth(true); setFCategory(''); setFActive(true)
+    setFSapAuth(true); setFCategory(''); setFTableKey(''); setFActive(true)
+    setApiMsg(null)
     setApiSrcModal(true)
   }
 
@@ -375,7 +421,9 @@ export default function DocumentTypesPage() {
     setFSelect(src.select_fields ?? ''); setFFilter(src.filter_template ?? '')
     setFExtra(src.extra_params ?? '')
     setFMaps(src.field_mappings.length ? src.field_mappings.map(m => ({ ...m })) : [{ api_field: '', label: '', ocr_field: null }])
-    setFSapAuth(src.use_sap_auth); setFCategory(src.category ?? ''); setFActive(src.is_active)
+    setFSapAuth(src.use_sap_auth); setFCategory(src.category ?? '')
+    setFTableKey(src.source_table_key ?? ''); setFActive(src.is_active)
+    setApiMsg(null)
     setApiSrcModal(true)
   }
 
@@ -390,7 +438,9 @@ export default function DocumentTypesPage() {
       base_url: fUrl.trim(), select_fields: fSelect || null,
       filter_template: fFilter || null, extra_params: fExtra || null,
       field_mappings: validMaps, use_sap_auth: fSapAuth,
-      category: fCategory || null, is_active: fActive,
+      category: fCategory || null,
+      source_table_key: (fCategory === 'line_item' && fTableKey) ? fTableKey : null,
+      is_active: fActive,
     }
     try {
       if (editApiSrc) {
@@ -867,12 +917,17 @@ export default function DocumentTypesPage() {
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-2 flex-wrap">
                                         <span className="text-sm font-medium text-gray-800">{src.name}</span>
-                                        {src.category && (
-                                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium
-                                            ${src.category === 'seller'
-                                              ? 'bg-blue-50 text-blue-600 border border-blue-100'
-                                              : 'bg-purple-50 text-purple-600 border border-purple-100'}`}>
-                                            {src.category === 'seller' ? 'Người bán' : 'Dòng hàng'}
+                                        {src.category === 'header' && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium
+                                            bg-blue-50 text-blue-600 border border-blue-100">
+                                            ⚡ Tự động (1 lần)
+                                          </span>
+                                        )}
+                                        {src.category === 'line_item' && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium
+                                            bg-purple-50 text-purple-600 border border-purple-100">
+                                            🔁 Từng dòng
+                                            {src.source_table_key ? ` · ${src.source_table_key}` : ''}
                                           </span>
                                         )}
                                       </div>
@@ -1142,11 +1197,11 @@ export default function DocumentTypesPage() {
               )}
 
               {/* Basic info */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Tên *</label>
                   <input value={fName} onChange={e => setFName(e.target.value)}
-                    placeholder="VD: SAP Orders theo MST"
+                    placeholder="VD: SAP Items lookup"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
                       focus:outline-none focus:ring-2 focus:ring-amber-400" />
                 </div>
@@ -1157,16 +1212,58 @@ export default function DocumentTypesPage() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
                       focus:outline-none focus:ring-2 focus:ring-amber-400" />
                 </div>
+              </div>
+
+              {/* Category + table selector */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Chạy tự động</label>
-                  <select value={fCategory} onChange={e => setFCategory(e.target.value)}
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Chế độ chạy</label>
+                  <select value={fCategory}
+                    onChange={e => { setFCategory(e.target.value); if (e.target.value !== 'line_item') setFTableKey('') }}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
                       focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white">
-                    <option value="">— Thủ công</option>
-                    <option value="seller">🏢 Người bán – tự động khi mở</option>
-                    <option value="line_item">📦 Hàng hóa – tự động từng dòng</option>
+                    <option value="">🖱 Thủ công – chạy khi người dùng gọi</option>
+                    <option value="header">⚡ Tự động – chạy 1 lần khi mở chứng từ (context toàn bộ trường)</option>
+                    {dtTables.length > 0 && (
+                      <option value="line_item">🔁 Tự động – chạy cho từng dòng trong bảng</option>
+                    )}
                   </select>
+                  {fCategory === 'header' && (
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      API sẽ được gọi 1 lần, context là tất cả trường chứng từ ({dtFields.length} trường)
+                    </p>
+                  )}
                 </div>
+
+                {/* Table selector: only when line_item */}
+                {fCategory === 'line_item' && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Bảng dữ liệu để lặp <span className="text-red-500">*</span>
+                    </label>
+                    {dtTables.length === 0 ? (
+                      <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        Loại chứng từ này chưa có bảng dữ liệu nào
+                      </div>
+                    ) : (
+                      <select value={fTableKey} onChange={e => setFTableKey(e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                          focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white">
+                        <option value="">— Chọn bảng</option>
+                        {dtTables.map(t => (
+                          <option key={t.table_key} value={t.table_key}>
+                            {t.table_name} ({t.columns.length} cột)
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {fTableKey && (
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        API sẽ được gọi cho từng dòng trong bảng này, context gồm trường chứng từ + cột dòng
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Endpoint */}
@@ -1182,7 +1279,7 @@ export default function DocumentTypesPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">$select</label>
                   <input value={fSelect} onChange={e => setFSelect(e.target.value)}
-                    placeholder="DocEntry,U_MST,DocDate"
+                    placeholder="DocEntry,ItemCode,DocDate"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
                       focus:outline-none focus:ring-2 focus:ring-amber-400" />
                 </div>
@@ -1195,53 +1292,107 @@ export default function DocumentTypesPage() {
                 </div>
               </div>
 
+              {/* $filter with dynamic placeholder chips */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">
-                  $filter — dùng {'{'}placeholder{'}'} từ context chứng từ
+                  $filter — dùng {'{'}field_key{'}'} từ context chứng từ
                 </label>
                 <input value={fFilter} onChange={e => setFFilter(e.target.value)}
-                  placeholder="Cancelled eq 'tNO' and U_MST eq '{NBanMST}'"
+                  placeholder="Cancelled eq 'tNO' and U_Field eq '{field_key}'"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
                     focus:outline-none focus:ring-2 focus:ring-amber-400" />
+
+                {/* Dynamic placeholder chips */}
+                {Object.keys(placeholderGroups).length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    <span className="text-[11px] text-gray-400 font-medium">
+                      Placeholder khả dụng
+                      {fCategory === 'line_item' && fTableKey
+                        ? ' (trường chứng từ + cột dòng – gọi API mỗi dòng):'
+                        : ' (trường chứng từ – gọi API 1 lần):'}
+                    </span>
+                    {Object.entries(placeholderGroups).map(([group, fields]) => (
+                      <div key={group} className="flex flex-wrap gap-1 items-center">
+                        <span className="text-[10px] text-gray-300 w-28 shrink-0 truncate">{group}</span>
+                        {fields.map(p => (
+                          <button key={p.key} type="button"
+                            onClick={() => setFFilter(v => v + `{${p.key}}`)}
+                            title={p.label}
+                            className="text-[11px] font-mono bg-amber-50 text-amber-700 border border-amber-200
+                              px-1.5 py-0.5 rounded hover:bg-amber-100 transition-colors whitespace-nowrap">
+                            {`{${p.key}}`}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {Object.keys(placeholderGroups).length === 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    {settingsDtFull
+                      ? 'Loại chứng từ này chưa có trường nào được định nghĩa'
+                      : 'Đang tải trường chứng từ...'}
+                  </p>
+                )}
               </div>
 
               {/* Field mappings */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-gray-600">Mapping trường API → đích</label>
+                  <label className="text-xs font-medium text-gray-600">
+                    Mapping trường API → trường đích chứng từ
+                  </label>
                   <button onClick={() => setFMaps(p => [...p, { api_field: '', label: '', ocr_field: null }])}
                     className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium">
                     <Plus size={12} /> Thêm trường
                   </button>
                 </div>
                 <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 px-0.5">
-                  {['Trường API (JSON key)', 'Nhãn hiển thị', 'Trường đích (ocr_field)', ''].map(h => (
+                  {['Trường API (JSON key)', 'Nhãn hiển thị', 'Trường đích (field_key)', ''].map(h => (
                     <span key={h} className="text-[11px] font-medium text-gray-400">{h}</span>
                   ))}
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {fMaps.map((m, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-                      <input value={m.api_field}
-                        onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, api_field: e.target.value } : x))}
-                        placeholder="DocEntry"
-                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
-                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
-                      <input value={m.label}
-                        onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
-                        placeholder="Số đơn hàng"
-                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs
-                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
-                      <input value={m.ocr_field ?? ''}
-                        onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: e.target.value || null } : x))}
-                        placeholder="ItemCode / NBanMa..."
-                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
-                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
-                      <button onClick={() => setFMaps(p => p.filter((_, j) => j !== i))}
-                        disabled={fMaps.length === 1}
-                        className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
-                        <Trash2 size={13} />
-                      </button>
+                    <div key={i} className="space-y-1">
+                      <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
+                        <input value={m.api_field}
+                          onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, api_field: e.target.value } : x))}
+                          placeholder="DocEntry"
+                          className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        <input value={m.label}
+                          onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                          placeholder="Nhãn hiển thị"
+                          className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs
+                            focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        <input value={m.ocr_field ?? ''}
+                          onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: e.target.value || null } : x))}
+                          placeholder="field_key đích..."
+                          className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        <button onClick={() => setFMaps(p => p.filter((_, j) => j !== i))}
+                          disabled={fMaps.length === 1}
+                          className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      {/* Quick-pick target field chips from doc type schema */}
+                      {targetFields.length > 0 && (
+                        <div className="flex flex-wrap gap-1 ml-0.5">
+                          {targetFields.map(tf => (
+                            <button key={tf.key} type="button"
+                              onClick={() => setFMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: tf.key } : x))}
+                              title={`${tf.group}: ${tf.label}`}
+                              className={`text-[10px] font-mono px-1 py-0.5 rounded border transition-colors
+                                ${m.ocr_field === tf.key
+                                  ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                  : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-amber-50 hover:text-amber-600'}`}>
+                              {tf.key}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

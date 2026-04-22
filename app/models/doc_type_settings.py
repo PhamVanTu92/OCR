@@ -45,7 +45,8 @@ class DocTypeApiSource(Base):
     extra_params     = Column(UnicodeText,  nullable=True)    # VD: $skip=0&$top=100
     field_mappings   = Column(UnicodeText,  nullable=True)    # JSON: [{api_field,label,ocr_field}]
     use_sap_auth     = Column(Boolean,      nullable=False, default=True)
-    category         = Column(Unicode(20),  nullable=True)    # None | 'seller' | 'line_item'
+    category         = Column(Unicode(20),  nullable=True)    # None | 'header' | 'line_item'
+    source_table_key = Column(Unicode(100), nullable=True)    # table_key to iterate (category=line_item)
     is_active        = Column(Boolean,      nullable=False, default=True)
     created_at       = Column(Unicode(50),  default=_now)
     updated_at       = Column(Unicode(50),  default=_now, onupdate=_now)

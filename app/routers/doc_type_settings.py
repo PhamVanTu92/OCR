@@ -129,20 +129,21 @@ def _serialize_api_source(src: DocTypeApiSource) -> dict:
         except Exception:
             mappings = []
     return {
-        "id":              src.id,
+        "id":               src.id,
         "document_type_id": src.document_type_id,
-        "name":            src.name,
-        "description":     src.description,
-        "base_url":        src.base_url,
-        "select_fields":   src.select_fields,
-        "filter_template": src.filter_template,
-        "extra_params":    src.extra_params,
-        "field_mappings":  mappings,
-        "use_sap_auth":    src.use_sap_auth,
-        "category":        src.category,
-        "is_active":       src.is_active,
-        "created_at":      src.created_at,
-        "updated_at":      src.updated_at,
+        "name":             src.name,
+        "description":      src.description,
+        "base_url":         src.base_url,
+        "select_fields":    src.select_fields,
+        "filter_template":  src.filter_template,
+        "extra_params":     src.extra_params,
+        "field_mappings":   mappings,
+        "use_sap_auth":     src.use_sap_auth,
+        "category":         src.category,
+        "source_table_key": src.source_table_key,
+        "is_active":        src.is_active,
+        "created_at":       src.created_at,
+        "updated_at":       src.updated_at,
     }
 
 
@@ -178,29 +179,31 @@ class ApiFieldMapping(BaseModel):
 
 
 class ApiSourceCreate(BaseModel):
-    name:            str
-    description:     Optional[str]       = None
-    base_url:        str
-    select_fields:   Optional[str]       = None
-    filter_template: Optional[str]       = None
-    extra_params:    Optional[str]       = None
-    field_mappings:  List[ApiFieldMapping] = []
-    use_sap_auth:    bool                = True
-    category:        Optional[str]       = None   # None | 'seller' | 'line_item'
-    is_active:       bool                = True
+    name:             str
+    description:      Optional[str]       = None
+    base_url:         str
+    select_fields:    Optional[str]       = None
+    filter_template:  Optional[str]       = None
+    extra_params:     Optional[str]       = None
+    field_mappings:   List[ApiFieldMapping] = []
+    use_sap_auth:     bool                = True
+    category:         Optional[str]       = None   # None | 'header' | 'line_item'
+    source_table_key: Optional[str]       = None   # table_key to iterate when line_item
+    is_active:        bool                = True
 
 
 class ApiSourceUpdate(BaseModel):
-    name:            Optional[str]              = None
-    description:     Optional[str]              = None
-    base_url:        Optional[str]              = None
-    select_fields:   Optional[str]              = None
-    filter_template: Optional[str]              = None
-    extra_params:    Optional[str]              = None
-    field_mappings:  Optional[List[ApiFieldMapping]] = None
-    use_sap_auth:    Optional[bool]             = None
-    category:        Optional[str]              = None
-    is_active:       Optional[bool]             = None
+    name:             Optional[str]              = None
+    description:      Optional[str]              = None
+    base_url:         Optional[str]              = None
+    select_fields:    Optional[str]              = None
+    filter_template:  Optional[str]              = None
+    extra_params:     Optional[str]              = None
+    field_mappings:   Optional[List[ApiFieldMapping]] = None
+    use_sap_auth:     Optional[bool]             = None
+    category:         Optional[str]              = None
+    source_table_key: Optional[str]              = None
+    is_active:        Optional[bool]             = None
 
 
 class InvokeRequest(BaseModel):
@@ -293,6 +296,7 @@ async def create_api_source(
         field_mappings   = json.dumps([m.model_dump() for m in body.field_mappings], ensure_ascii=False),
         use_sap_auth     = body.use_sap_auth,
         category         = body.category,
+        source_table_key = body.source_table_key,
         is_active        = body.is_active,
     )
     db.add(src)
