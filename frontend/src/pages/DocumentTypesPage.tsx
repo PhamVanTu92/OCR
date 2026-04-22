@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   Plus, Pencil, Trash2, FileText, Link2, X,
   CheckCircle2, AlertCircle, Search, FolderOpen, ChevronDown, ChevronUp,
+  Settings, Database, KeyRound, Play, Info, Loader2, RefreshCw,
 } from 'lucide-react'
 import { docTypeApi } from '../api/documentTypes'
 import { integrationApi } from '../api/integrations'
-import type { DocumentCategory, DocumentType, IntegrationConfig } from '../types'
+import { docTypeSettingsApi } from '../api/docTypeSettings'
+import type { DocumentCategory, DocumentType, IntegrationConfig, DocTypeSapConfig, DocTypeApiSource, ApiFieldMapping } from '../types'
 import DocTypeModal from '../components/DocType/DocTypeModal'
 import IntegrationConfigModal from '../components/Integration/IntegrationConfigModal'
 import Pagination from '../components/Pagination'
@@ -155,6 +157,41 @@ export default function DocumentTypesPage() {
   const [intModalOpen,    setIntModalOpen]     = useState(false)
   const [editIntegration, setEditIntegration]  = useState<IntegrationConfig | null>(null)
 
+  // Settings panel (SAP + API sources, inline per doc type)
+  const [settingsDt,      setSettingsDt]      = useState<DocumentType | null>(null)
+  const [settingsTab,     setSettingsTab]     = useState<'sap' | 'api'>('sap')
+  const [sapCfg,          setSapCfg]          = useState<DocTypeSapConfig | null>(null)
+  const [sapLoading,      setSapLoading]      = useState(false)
+  const [sapSaving,       setSapSaving]       = useState(false)
+  const [sapTesting,      setSapTesting]      = useState(false)
+  const [sapMsg,          setSapMsg]          = useState<{ ok: boolean; text: string } | null>(null)
+  // SAP form fields
+  const [sapUrl,          setSapUrl]          = useState('')
+  const [sapDb,           setSapDb]           = useState('')
+  const [sapUser,         setSapUser]         = useState('')
+  const [sapPass,         setSapPass]         = useState('')
+  const [sapActive,       setSapActive]       = useState(true)
+  // API sources
+  const [apiSources,      setApiSources]      = useState<DocTypeApiSource[]>([])
+  const [apiLoading,      setApiLoading]      = useState(false)
+  const [apiSrcModal,     setApiSrcModal]     = useState(false)
+  const [editApiSrc,      setEditApiSrc]      = useState<DocTypeApiSource | null>(null)
+  const [apiSaving,       setApiSaving]       = useState(false)
+  const [apiMsg,          setApiMsg]          = useState<{ ok: boolean; text: string } | null>(null)
+  const [apiDeleting,     setApiDeleting]     = useState<number | null>(null)
+  const [invoking,        setInvoking]        = useState<number | null>(null)
+  // API source form
+  const [fName,     setFName]     = useState('')
+  const [fDesc,     setFDesc]     = useState('')
+  const [fUrl,      setFUrl]      = useState('')
+  const [fSelect,   setFSelect]   = useState('')
+  const [fFilter,   setFFilter]   = useState('')
+  const [fExtra,    setFExtra]    = useState('')
+  const [fMaps,     setFMaps]     = useState<ApiFieldMapping[]>([{ api_field: '', label: '', ocr_field: null }])
+  const [fSapAuth,  setFSapAuth]  = useState(true)
+  const [fCategory, setFCategory] = useState('')
+  const [fActive,   setFActive]   = useState(true)
+
   // ── Filter + pagination ───────────────────────────────────────────────────
   const [search,      setSearch]      = useState('')
   const [filterCatId, setFilterCatId] = useState<number | ''>('')
@@ -257,6 +294,137 @@ export default function DocumentTypesPage() {
     if (!confirm('Xoá cấu hình tích hợp này?')) return
     await integrationApi.delete(integrationDt.id, intId)
     refreshIntegrations()
+  }
+
+  // ── Settings panel handlers ───────────────────────────────────────────────
+  const openSettings = async (dt: DocumentType) => {
+    if (settingsDt?.id === dt.id) { setSettingsDt(null); return }
+    setSettingsDt(dt)
+    setSettingsTab('sap')
+    setSapMsg(null); setApiMsg(null)
+    // Load SAP config
+    setSapLoading(true)
+    try {
+      const { data } = await docTypeSettingsApi.getSapConfig(dt.id)
+      setSapCfg(data)
+      setSapUrl(data.sap_base_url ?? '')
+      setSapDb(data.sap_company_db ?? '')
+      setSapUser(data.sap_username ?? '')
+      setSapPass('')
+      setSapActive(data.is_active)
+    } finally { setSapLoading(false) }
+    // Load API sources
+    setApiLoading(true)
+    try {
+      const { data } = await docTypeSettingsApi.listApiSources(dt.id)
+      setApiSources(data)
+    } finally { setApiLoading(false) }
+  }
+
+  const handleSaveSap = async () => {
+    if (!settingsDt) return
+    setSapSaving(true); setSapMsg(null)
+    try {
+      const { data } = await docTypeSettingsApi.updateSapConfig(settingsDt.id, {
+        sap_base_url:   sapUrl   || null,
+        sap_company_db: sapDb    || null,
+        sap_username:   sapUser  || null,
+        sap_password:   sapPass  || undefined,
+        is_active:      sapActive,
+      })
+      setSapCfg(data); setSapPass('')
+      setSapMsg({ ok: true, text: 'Đã lưu cấu hình SAP!' })
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setSapMsg({ ok: false, text: msg ?? 'Lưu thất bại' })
+    } finally { setSapSaving(false) }
+  }
+
+  const handleTestSap = async () => {
+    if (!settingsDt) return
+    setSapTesting(true); setSapMsg(null)
+    try {
+      const { data } = await docTypeSettingsApi.testSapLogin(settingsDt.id)
+      setSapMsg({ ok: true, text: data.message })
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setSapMsg({ ok: false, text: msg ?? 'Đăng nhập thất bại' })
+    } finally { setSapTesting(false) }
+  }
+
+  const loadApiSources = async () => {
+    if (!settingsDt) return
+    setApiLoading(true)
+    try {
+      const { data } = await docTypeSettingsApi.listApiSources(settingsDt.id)
+      setApiSources(data)
+    } finally { setApiLoading(false) }
+  }
+
+  const openAddApiSrc = () => {
+    setEditApiSrc(null)
+    setFName(''); setFDesc(''); setFUrl(''); setFSelect(''); setFFilter(''); setFExtra('')
+    setFMaps([{ api_field: '', label: '', ocr_field: null }])
+    setFSapAuth(true); setFCategory(''); setFActive(true)
+    setApiSrcModal(true)
+  }
+
+  const openEditApiSrc = (src: DocTypeApiSource) => {
+    setEditApiSrc(src)
+    setFName(src.name); setFDesc(src.description ?? ''); setFUrl(src.base_url)
+    setFSelect(src.select_fields ?? ''); setFFilter(src.filter_template ?? '')
+    setFExtra(src.extra_params ?? '')
+    setFMaps(src.field_mappings.length ? src.field_mappings.map(m => ({ ...m })) : [{ api_field: '', label: '', ocr_field: null }])
+    setFSapAuth(src.use_sap_auth); setFCategory(src.category ?? ''); setFActive(src.is_active)
+    setApiSrcModal(true)
+  }
+
+  const handleSaveApiSrc = async () => {
+    if (!settingsDt) return
+    if (!fName.trim()) { setApiMsg({ ok: false, text: 'Tên không được trống' }); return }
+    if (!fUrl.trim())  { setApiMsg({ ok: false, text: 'Base URL không được trống' }); return }
+    setApiSaving(true); setApiMsg(null)
+    const validMaps = fMaps.filter(m => m.api_field.trim())
+    const payload = {
+      name: fName.trim(), description: fDesc || null,
+      base_url: fUrl.trim(), select_fields: fSelect || null,
+      filter_template: fFilter || null, extra_params: fExtra || null,
+      field_mappings: validMaps, use_sap_auth: fSapAuth,
+      category: fCategory || null, is_active: fActive,
+    }
+    try {
+      if (editApiSrc) {
+        await docTypeSettingsApi.updateApiSource(settingsDt.id, editApiSrc.id, payload)
+      } else {
+        await docTypeSettingsApi.createApiSource(settingsDt.id, payload)
+      }
+      setApiSrcModal(false)
+      loadApiSources()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setApiMsg({ ok: false, text: msg ?? 'Lưu thất bại' })
+    } finally { setApiSaving(false) }
+  }
+
+  const handleDeleteApiSrc = async (id: number) => {
+    if (!settingsDt || !confirm('Xoá API source này?')) return
+    setApiDeleting(id)
+    try {
+      await docTypeSettingsApi.deleteApiSource(settingsDt.id, id)
+      setApiSources(prev => prev.filter(s => s.id !== id))
+    } finally { setApiDeleting(null) }
+  }
+
+  const handleInvokeApiSrc = async (src: DocTypeApiSource) => {
+    if (!settingsDt) return
+    setInvoking(src.id)
+    try {
+      const { data } = await docTypeSettingsApi.invokeApiSource(settingsDt.id, src.id, {})
+      alert(`Gọi thành công – ${data.count} bản ghi\n\nURL: ${data.url_called}`)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(`Lỗi: ${msg ?? 'Gọi API thất bại'}`)
+    } finally { setInvoking(null) }
   }
 
   return (
@@ -470,7 +638,8 @@ export default function DocumentTypesPage() {
                 <React.Fragment key={dt.id}>
                   {/* ── Doc type row ─────────────────────────────────────── */}
                   <tr className={`hover:bg-gray-50 transition-colors
-                    ${integrationDt?.id === dt.id ? 'bg-indigo-50/30' : ''}`}>
+                    ${integrationDt?.id === dt.id ? 'bg-indigo-50/30' : ''}
+                    ${settingsDt?.id === dt.id ? 'bg-amber-50/30' : ''}`}>
                     <td className="table-td text-gray-400 w-12">
                       {(page - 1) * pageSize + idx + 1}
                     </td>
@@ -512,6 +681,13 @@ export default function DocumentTypesPage() {
                             : 'text-gray-400 hover:text-indigo-500'}`}>
                           <Link2 size={15} />
                         </button>
+                        <button onClick={() => openSettings(dt)}
+                          title="Kết nối SAP & API nguồn"
+                          className={`transition-colors ${settingsDt?.id === dt.id
+                            ? 'text-amber-600'
+                            : 'text-gray-400 hover:text-amber-500'}`}>
+                          <Settings size={15} />
+                        </button>
                         <button onClick={() => handleDelete(dt.id)} title="Vô hiệu hoá"
                           className="text-red-400 hover:text-red-600 transition-colors">
                           <Trash2 size={15} />
@@ -519,6 +695,229 @@ export default function DocumentTypesPage() {
                       </div>
                     </td>
                   </tr>
+
+                  {/* ── Inline settings panel (SAP + API sources) ────────── */}
+                  {settingsDt?.id === dt.id && (
+                    <tr>
+                      <td colSpan={5} className="bg-amber-50/40 border-b border-amber-100 px-6 py-5">
+
+                        {/* Panel header */}
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-amber-700">
+                            <Settings size={15} />
+                            Thiết lập kết nối — <span className="font-normal">{dt.name}</span>
+                          </div>
+                          <button onClick={() => setSettingsDt(null)} className="text-gray-400 hover:text-gray-600">
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex gap-1 mb-4 border-b border-amber-100">
+                          {(['sap', 'api'] as const).map(tab => (
+                            <button key={tab} onClick={() => setSettingsTab(tab)}
+                              className={`px-4 py-2 text-xs font-medium rounded-t-lg transition-colors
+                                ${settingsTab === tab
+                                  ? 'bg-white border border-b-white border-amber-200 text-amber-700 -mb-px'
+                                  : 'text-gray-500 hover:text-amber-600'}`}>
+                              {tab === 'sap' ? '🔗 Kết nối SAP B1' : '🌐 API nguồn dữ liệu ngoài'}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* SAP Tab */}
+                        {settingsTab === 'sap' && (
+                          <div className="space-y-4">
+                            {sapLoading ? (
+                              <div className="text-xs text-gray-400 flex items-center gap-2 py-2">
+                                <Loader2 size={13} className="animate-spin" /> Đang tải...
+                              </div>
+                            ) : (
+                              <>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                      SAP Base URL
+                                    </label>
+                                    <input value={sapUrl} onChange={e => setSapUrl(e.target.value)}
+                                      placeholder="https://IP:50000"
+                                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                                        font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                      CompanyDB
+                                    </label>
+                                    <input value={sapDb} onChange={e => setSapDb(e.target.value)}
+                                      placeholder="SBODemoVN"
+                                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                      Username
+                                    </label>
+                                    <input value={sapUser} onChange={e => setSapUser(e.target.value)}
+                                      placeholder="manager"
+                                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                      Password <span className="text-gray-400 font-normal">(để trống = giữ nguyên)</span>
+                                    </label>
+                                    <input type="password" value={sapPass} onChange={e => setSapPass(e.target.value)}
+                                      placeholder="••••••••"
+                                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <input type="checkbox" id={`sap-active-${dt.id}`}
+                                    checked={sapActive} onChange={e => setSapActive(e.target.checked)}
+                                    className="w-4 h-4 text-amber-500 rounded" />
+                                  <label htmlFor={`sap-active-${dt.id}`} className="text-sm text-gray-600">
+                                    Kích hoạt kết nối SAP
+                                  </label>
+                                </div>
+
+                                {/* Status message */}
+                                {sapMsg && (
+                                  <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm
+                                    ${sapMsg.ok
+                                      ? 'bg-green-50 border border-green-200 text-green-700'
+                                      : 'bg-red-50 border border-red-200 text-red-600'}`}>
+                                    {sapMsg.ok
+                                      ? <CheckCircle2 size={13} />
+                                      : <AlertCircle size={13} />}
+                                    <span className="flex-1">{sapMsg.text}</span>
+                                    <button onClick={() => setSapMsg(null)}><X size={11} /></button>
+                                  </div>
+                                )}
+
+                                {/* Buttons */}
+                                <div className="flex items-center gap-2">
+                                  <button onClick={handleSaveSap} disabled={sapSaving}
+                                    className="flex items-center gap-1.5 px-4 py-2 text-xs text-white
+                                      bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-60
+                                      transition-colors">
+                                    {sapSaving
+                                      ? <><Loader2 size={12} className="animate-spin" /> Đang lưu...</>
+                                      : <><Database size={12} /> Lưu cấu hình</>}
+                                  </button>
+                                  <button onClick={handleTestSap} disabled={sapTesting || !sapCfg?.sap_base_url}
+                                    className="flex items-center gap-1.5 px-4 py-2 text-xs
+                                      border border-amber-300 text-amber-700 rounded-lg
+                                      hover:bg-amber-50 disabled:opacity-50 transition-colors">
+                                    {sapTesting
+                                      ? <><Loader2 size={12} className="animate-spin" /> Đang kiểm tra...</>
+                                      : <><RefreshCw size={12} /> Kiểm tra kết nối</>}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* API Sources Tab */}
+                        {settingsTab === 'api' && (
+                          <div className="space-y-3">
+                            {/* Tab toolbar */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">
+                                {apiSources.length} API source đã cấu hình
+                              </span>
+                              <button onClick={openAddApiSrc}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white
+                                  bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors">
+                                <Plus size={12} /> Thêm API source
+                              </button>
+                            </div>
+
+                            {/* API msg */}
+                            {apiMsg && (
+                              <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm
+                                ${apiMsg.ok
+                                  ? 'bg-green-50 border border-green-200 text-green-700'
+                                  : 'bg-red-50 border border-red-200 text-red-600'}`}>
+                                {apiMsg.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                                <span className="flex-1">{apiMsg.text}</span>
+                                <button onClick={() => setApiMsg(null)}><X size={11} /></button>
+                              </div>
+                            )}
+
+                            {apiLoading ? (
+                              <div className="text-xs text-gray-400 flex items-center gap-2 py-2">
+                                <Loader2 size={13} className="animate-spin" /> Đang tải...
+                              </div>
+                            ) : apiSources.length === 0 ? (
+                              <div className="text-xs text-gray-400 py-6 text-center border
+                                border-dashed border-amber-200 rounded-lg">
+                                Chưa có API source — nhấn <strong>Thêm API source</strong> để khai báo
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {apiSources.map(src => (
+                                  <div key={src.id}
+                                    className="bg-white border border-gray-200 rounded-lg px-4 py-3
+                                      flex items-start gap-3">
+                                    <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5
+                                      ${src.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-sm font-medium text-gray-800">{src.name}</span>
+                                        {src.category && (
+                                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium
+                                            ${src.category === 'seller'
+                                              ? 'bg-blue-50 text-blue-600 border border-blue-100'
+                                              : 'bg-purple-50 text-purple-600 border border-purple-100'}`}>
+                                            {src.category === 'seller' ? 'Người bán' : 'Dòng hàng'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-gray-400 font-mono truncate mt-0.5">
+                                        {src.base_url}
+                                      </p>
+                                      <p className="text-[11px] text-gray-400 mt-0.5">
+                                        {src.field_mappings.length} mapping
+                                        {src.use_sap_auth ? ' · SAP auth' : ''}
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <button onClick={() => handleInvokeApiSrc(src)}
+                                        disabled={invoking === src.id}
+                                        title="Gọi thử API"
+                                        className="text-green-500 hover:text-green-700 disabled:opacity-50
+                                          transition-colors">
+                                        {invoking === src.id
+                                          ? <Loader2 size={13} className="animate-spin" />
+                                          : <Play size={13} />}
+                                      </button>
+                                      <button onClick={() => openEditApiSrc(src)}
+                                        title="Chỉnh sửa"
+                                        className="text-indigo-400 hover:text-indigo-600 transition-colors">
+                                        <Pencil size={13} />
+                                      </button>
+                                      <button onClick={() => handleDeleteApiSrc(src.id)}
+                                        disabled={apiDeleting === src.id}
+                                        title="Xoá"
+                                        className="text-red-400 hover:text-red-600 disabled:opacity-50
+                                          transition-colors">
+                                        {apiDeleting === src.id
+                                          ? <Loader2 size={13} className="animate-spin" />
+                                          : <Trash2 size={13} />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
 
                   {/* ── Inline integration panel ──────────────────────────── */}
                   {integrationDt?.id === dt.id && (
@@ -709,6 +1108,177 @@ export default function DocumentTypesPage() {
           onClose={() => setIntModalOpen(false)}
           onSaved={() => { setIntModalOpen(false); refreshIntegrations() }}
         />
+      )}
+
+      {/* ── API Source Add/Edit Modal ─────────────────────────────────────── */}
+      {apiSrcModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
+              <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                <Info size={16} className="text-amber-500" />
+                {editApiSrc ? 'Chỉnh sửa API source' : 'Thêm API source mới'}
+                {settingsDt && (
+                  <span className="text-xs font-normal text-gray-400 ml-1">— {settingsDt.name}</span>
+                )}
+              </h2>
+              <button onClick={() => setApiSrcModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {apiMsg && (
+                <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm
+                  ${apiMsg.ok
+                    ? 'bg-green-50 border border-green-200 text-green-700'
+                    : 'bg-red-50 border border-red-200 text-red-600'}`}>
+                  {apiMsg.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                  <span className="flex-1">{apiMsg.text}</span>
+                  <button onClick={() => setApiMsg(null)}><X size={11} /></button>
+                </div>
+              )}
+
+              {/* Basic info */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Tên *</label>
+                  <input value={fName} onChange={e => setFName(e.target.value)}
+                    placeholder="VD: SAP Orders theo MST"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Mô tả</label>
+                  <input value={fDesc} onChange={e => setFDesc(e.target.value)}
+                    placeholder="Ghi chú..."
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Chạy tự động</label>
+                  <select value={fCategory} onChange={e => setFCategory(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white">
+                    <option value="">— Thủ công</option>
+                    <option value="seller">🏢 Người bán – tự động khi mở</option>
+                    <option value="line_item">📦 Hàng hóa – tự động từng dòng</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Endpoint */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Base URL *</label>
+                <input value={fUrl} onChange={e => setFUrl(e.target.value)}
+                  placeholder="https://IP:50000/b1s/v1/Orders"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                    focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">$select</label>
+                  <input value={fSelect} onChange={e => setFSelect(e.target.value)}
+                    placeholder="DocEntry,U_MST,DocDate"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                      focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Extra params</label>
+                  <input value={fExtra} onChange={e => setFExtra(e.target.value)}
+                    placeholder="$top=100&$orderby=DocDate desc"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                      focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  $filter — dùng {'{'}placeholder{'}'} từ context chứng từ
+                </label>
+                <input value={fFilter} onChange={e => setFFilter(e.target.value)}
+                  placeholder="Cancelled eq 'tNO' and U_MST eq '{NBanMST}'"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                    focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              </div>
+
+              {/* Field mappings */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-gray-600">Mapping trường API → đích</label>
+                  <button onClick={() => setFMaps(p => [...p, { api_field: '', label: '', ocr_field: null }])}
+                    className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium">
+                    <Plus size={12} /> Thêm trường
+                  </button>
+                </div>
+                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 px-0.5">
+                  {['Trường API (JSON key)', 'Nhãn hiển thị', 'Trường đích (ocr_field)', ''].map(h => (
+                    <span key={h} className="text-[11px] font-medium text-gray-400">{h}</span>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  {fMaps.map((m, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
+                      <input value={m.api_field}
+                        onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, api_field: e.target.value } : x))}
+                        placeholder="DocEntry"
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                      <input value={m.label}
+                        onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                        placeholder="Số đơn hàng"
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs
+                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                      <input value={m.ocr_field ?? ''}
+                        onChange={e => setFMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: e.target.value || null } : x))}
+                        placeholder="ItemCode / NBanMa..."
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                      <button onClick={() => setFMaps(p => p.filter((_, j) => j !== i))}
+                        disabled={fMaps.length === 1}
+                        className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Options */}
+              <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input type="checkbox" checked={fSapAuth} onChange={e => setFSapAuth(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 rounded" />
+                  <KeyRound size={13} className="text-amber-500" />
+                  Dùng xác thực SAP B1
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input type="checkbox" checked={fActive} onChange={e => setFActive(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 rounded" />
+                  Kích hoạt
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-2 px-6 py-4 border-t shrink-0">
+              <button onClick={() => setApiSrcModal(false)}
+                className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
+                Huỷ
+              </button>
+              <button onClick={handleSaveApiSrc} disabled={apiSaving}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm text-white
+                  bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-60 transition-colors">
+                {apiSaving
+                  ? <><Loader2 size={14} className="animate-spin" /> Đang lưu...</>
+                  : editApiSrc ? 'Cập nhật' : 'Thêm mới'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

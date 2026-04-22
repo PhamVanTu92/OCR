@@ -385,6 +385,7 @@ export interface SavedInvoice {
   tthai:            number | null
   supplier_code:    string | null
   reference_po:     string | null
+  raw_data:         string | null
   created_at:       string | null
   updated_at:       string | null
 }
@@ -437,5 +438,35 @@ export interface SapPOItem {
   Quantity?:    number
   Unit?:        string
   NetPrice?:    number
+}
+
+// ─── Per-DocType SAP + API Sources ────────────────────────────────────────────
+
+export interface DocTypeSapConfig {
+  id:               number
+  document_type_id: number
+  sap_base_url:     string | null
+  sap_company_db:   string | null
+  sap_username:     string | null
+  is_active:        boolean
+  created_at:       string | null
+  updated_at:       string | null
+}
+
+export interface DocTypeApiSource {
+  id:               number
+  document_type_id: number
+  name:             string
+  description:      string | null
+  base_url:         string
+  select_fields:    string | null
+  filter_template:  string | null
+  extra_params:     string | null
+  field_mappings:   ApiFieldMapping[]
+  use_sap_auth:     boolean
+  category:         string | null   // null=manual | 'seller' | 'line_item'
+  is_active:        boolean
+  created_at:       string | null
+  updated_at:       string | null
 }
 

@@ -19,6 +19,7 @@ from .purchase_invoice import (
     SavedPurchaseInvoice,
     ExternalApiSource,
 )
+from .doc_type_settings import DocTypeSapConfig, DocTypeApiSource
 
 __all__ = [
     "Base",
@@ -44,4 +45,6 @@ __all__ = [
     "ProductMapping",
     "SavedPurchaseInvoice",
     "ExternalApiSource",
+    "DocTypeSapConfig",
+    "DocTypeApiSource",
 ]

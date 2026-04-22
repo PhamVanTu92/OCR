@@ -17,6 +17,7 @@ from app.routers import auth, document_types, integrations, ocr, organizations, 
 from app.routers import roles as roles_router
 from app.routers import api_tokens as api_tokens_router
 from app.routers import purchase_invoices as purchase_invoices_router
+from app.routers import doc_type_settings as doc_type_settings_router
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -49,6 +50,8 @@ def _run_column_migrations() -> None:
         ("purchase_invoice_configs", "sap_password",    "NVARCHAR(MAX) NULL"),
         # External API source category
         ("purchase_invoice_api_sources", "category",   "NVARCHAR(20)  NULL"),
+        # Per-doc-type SAP config (tables created by SQLAlchemy; migrations only for new columns)
+        # (no new columns needed – tables created fresh by Base.metadata.create_all)
     ]
     # ── Đổi VARCHAR → NVARCHAR cho purchase_invoice_configs ──────────────────
     # SQL Server: ALTER COLUMN không hỗ trợ DEFAULT inline → chỉ đổi kiểu dữ liệu
@@ -144,8 +147,9 @@ app.include_router(document_types.router,    prefix=API_PREFIX)
 app.include_router(users.router,             prefix=API_PREFIX)
 app.include_router(roles_router.router,      prefix=API_PREFIX)
 app.include_router(ocr.router,               prefix=API_PREFIX)
-app.include_router(integrations.router,             prefix=API_PREFIX)
-app.include_router(purchase_invoices_router.router, prefix=API_PREFIX)
+app.include_router(integrations.router,              prefix=API_PREFIX)
+app.include_router(purchase_invoices_router.router,  prefix=API_PREFIX)
+app.include_router(doc_type_settings_router.router,  prefix=API_PREFIX)
 
 
 @app.get("/health", tags=["Health"])
