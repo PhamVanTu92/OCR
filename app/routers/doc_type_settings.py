@@ -10,6 +10,11 @@ Endpoints:
   PUT  /document-types/{dt_id}/api-sources/{source_id}
   DELETE /document-types/{dt_id}/api-sources/{source_id}
   POST /document-types/{dt_id}/api-sources/{source_id}/invoke
+  GET  /document-types/{dt_id}/linked-sources
+  POST /document-types/{dt_id}/linked-sources
+  PUT  /document-types/{dt_id}/linked-sources/{src_id}
+  DELETE /document-types/{dt_id}/linked-sources/{src_id}
+  POST /document-types/{dt_id}/linked-sources/{src_id}/invoke
 """
 
 import json
@@ -24,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import CurrentUser, get_current_user, require_roles
-from app.models.doc_type_settings import DocTypeSapConfig, DocTypeApiSource
+from app.models.doc_type_settings import DocTypeSapConfig, DocTypeApiSource, DocTypeLinkedSource
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/document-types", tags=["Thiết lập loại chứng từ"])
@@ -424,3 +429,255 @@ async def invoke_api_source(
         "count":      len(rows),
         "url_called": str(resp.url),
     }
+
+
+# ─── Shared HTTP-call helper ──────────────────────────────────────────────────
+
+def _do_http_invoke(
+    base_url: str,
+    select_fields,
+    filter_template,
+    extra_params,
+    use_sap_auth: bool,
+    context: dict,
+    dt_id: int,
+    db: Session,
+) -> dict:
+    """Shared HTTP-call logic for both API sources and linked sources."""
+    params: dict[str, str] = {}
+    if select_fields and select_fields.strip():
+        params["$select"] = select_fields.strip()
+    if filter_template and filter_template.strip():
+        f = filter_template.strip()
+        for k, v in context.items():
+            if v is not None:
+                f = f.replace(f"{{{k}}}", str(v))
+        params["$filter"] = f
+    if extra_params and extra_params.strip():
+        for part in extra_params.strip().split("&"):
+            part = part.strip()
+            if "=" in part:
+                k2, v2 = part.split("=", 1)
+                params[k2.strip()] = v2.strip()
+
+    if use_sap_auth:
+        cfg = _get_or_create_sap_cfg(db, dt_id)
+        session_id = _get_sap_b1_session(cfg)
+        headers = _sap_b1_headers(cfg, session_id)
+    else:
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+    url = base_url.rstrip("/")
+    try:
+        with httpx.Client(timeout=30.0, verify=False) as http:
+            resp = http.get(url, headers=headers, params=params)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="API timeout")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Không thể kết nối API: {exc}")
+
+    if resp.status_code == 401 and use_sap_auth:
+        cfg = _get_or_create_sap_cfg(db, dt_id)
+        _dt_sap_session_cache.pop(_sap_cache_key(cfg), None)
+        raise HTTPException(status_code=401, detail="Session hết hạn. Vui lòng thử lại.")
+    if resp.status_code >= 400:
+        try:
+            err_msg = resp.json().get("error", {}).get("message", {}).get("value", resp.text[:300])
+        except Exception:
+            err_msg = resp.text[:300]
+        raise HTTPException(status_code=resp.status_code, detail=f"API trả về lỗi: {err_msg}")
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="API trả về dữ liệu không hợp lệ")
+
+    rows = data.get("value", data) if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        rows = [rows]
+    return {"success": True, "data": rows, "count": len(rows), "url_called": str(resp.url)}
+
+
+# ─── Linked Source Pydantic schemas ──────────────────────────────────────────
+
+class LinkedFieldMapping(BaseModel):
+    api_field: str
+    label:     str
+    ocr_field: Optional[str] = None
+
+
+class LinkedDisplayColumn(BaseModel):
+    api_field: str
+    label:     str
+
+
+class LinkedSourceCreate(BaseModel):
+    name:             str
+    description:      Optional[str]                  = None
+    base_url:         str
+    select_fields:    Optional[str]                  = None
+    filter_template:  Optional[str]                  = None
+    extra_params:     Optional[str]                  = None
+    use_sap_auth:     bool                           = True
+    header_mappings:  List[LinkedFieldMapping]       = []
+    lines_key:        Optional[str]                  = None
+    source_table_key: Optional[str]                  = None
+    line_mappings:    List[LinkedFieldMapping]        = []
+    display_columns:  List[LinkedDisplayColumn]      = []
+    is_active:        bool                           = True
+
+
+class LinkedSourceUpdate(BaseModel):
+    name:             Optional[str]                       = None
+    description:      Optional[str]                       = None
+    base_url:         Optional[str]                       = None
+    select_fields:    Optional[str]                       = None
+    filter_template:  Optional[str]                       = None
+    extra_params:     Optional[str]                       = None
+    use_sap_auth:     Optional[bool]                      = None
+    header_mappings:  Optional[List[LinkedFieldMapping]]  = None
+    lines_key:        Optional[str]                       = None
+    source_table_key: Optional[str]                       = None
+    line_mappings:    Optional[List[LinkedFieldMapping]]  = None
+    display_columns:  Optional[List[LinkedDisplayColumn]] = None
+    is_active:        Optional[bool]                      = None
+
+
+# ─── Linked Source serializer ─────────────────────────────────────────────────
+
+def _serialize_linked_source(src: DocTypeLinkedSource) -> dict:
+    def _parse(col) -> list:
+        if not col:
+            return []
+        try:
+            return json.loads(col)
+        except Exception:
+            return []
+    return {
+        "id":               src.id,
+        "document_type_id": src.document_type_id,
+        "name":             src.name,
+        "description":      src.description,
+        "base_url":         src.base_url,
+        "select_fields":    src.select_fields,
+        "filter_template":  src.filter_template,
+        "extra_params":     src.extra_params,
+        "use_sap_auth":     src.use_sap_auth,
+        "header_mappings":  _parse(src.header_mappings),
+        "lines_key":        src.lines_key,
+        "source_table_key": src.source_table_key,
+        "line_mappings":    _parse(src.line_mappings),
+        "display_columns":  _parse(src.display_columns),
+        "is_active":        src.is_active,
+        "created_at":       src.created_at,
+        "updated_at":       src.updated_at,
+    }
+
+
+# ─── Linked Sources CRUD ──────────────────────────────────────────────────────
+
+@router.get("/{dt_id}/linked-sources", summary="Danh sách chứng từ liên kết của loại chứng từ")
+async def list_linked_sources(
+    dt_id: int,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(get_current_user),
+):
+    sources = db.query(DocTypeLinkedSource).filter(
+        DocTypeLinkedSource.document_type_id == dt_id
+    ).order_by(DocTypeLinkedSource.name).all()
+    return [_serialize_linked_source(s) for s in sources]
+
+
+@router.post("/{dt_id}/linked-sources", summary="Tạo chứng từ liên kết cho loại chứng từ", status_code=201)
+async def create_linked_source(
+    dt_id: int,
+    body: LinkedSourceCreate,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(require_roles("admin", "doc_manager")),
+):
+    src = DocTypeLinkedSource(
+        document_type_id = dt_id,
+        name             = body.name,
+        description      = body.description,
+        base_url         = body.base_url,
+        select_fields    = body.select_fields,
+        filter_template  = body.filter_template,
+        extra_params     = body.extra_params,
+        use_sap_auth     = body.use_sap_auth,
+        header_mappings  = json.dumps([m.model_dump() for m in body.header_mappings], ensure_ascii=False),
+        lines_key        = body.lines_key,
+        source_table_key = body.source_table_key,
+        line_mappings    = json.dumps([m.model_dump() for m in body.line_mappings], ensure_ascii=False),
+        display_columns  = json.dumps([m.model_dump() for m in body.display_columns], ensure_ascii=False),
+        is_active        = body.is_active,
+    )
+    db.add(src)
+    db.commit()
+    db.refresh(src)
+    return _serialize_linked_source(src)
+
+
+@router.put("/{dt_id}/linked-sources/{src_id}", summary="Cập nhật chứng từ liên kết")
+async def update_linked_source(
+    dt_id: int,
+    src_id: int,
+    body: LinkedSourceUpdate,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(require_roles("admin", "doc_manager")),
+):
+    src = db.get(DocTypeLinkedSource, src_id)
+    if not src or src.document_type_id != dt_id:
+        raise HTTPException(status_code=404, detail="Không tìm thấy linked source")
+    updates = body.model_dump(exclude_none=True)
+    for list_field, items in [
+        ("header_mappings", body.header_mappings),
+        ("line_mappings",   body.line_mappings),
+        ("display_columns", body.display_columns),
+    ]:
+        if list_field in updates and items is not None:
+            updates[list_field] = json.dumps([m.model_dump() for m in items], ensure_ascii=False)
+    for k, v in updates.items():
+        setattr(src, k, v)
+    db.commit()
+    db.refresh(src)
+    return _serialize_linked_source(src)
+
+
+@router.delete("/{dt_id}/linked-sources/{src_id}", summary="Xoá chứng từ liên kết")
+async def delete_linked_source(
+    dt_id: int,
+    src_id: int,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(require_roles("admin", "doc_manager")),
+):
+    src = db.get(DocTypeLinkedSource, src_id)
+    if not src or src.document_type_id != dt_id:
+        raise HTTPException(status_code=404, detail="Không tìm thấy linked source")
+    db.delete(src)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{dt_id}/linked-sources/{src_id}/invoke", summary="Gọi chứng từ liên kết")
+async def invoke_linked_source(
+    dt_id: int,
+    src_id: int,
+    body: InvokeRequest,
+    db: Session = Depends(get_db),
+    _: CurrentUser = Depends(get_current_user),
+):
+    src = db.get(DocTypeLinkedSource, src_id)
+    if not src or src.document_type_id != dt_id:
+        raise HTTPException(status_code=404, detail="Không tìm thấy linked source")
+    if not src.is_active:
+        raise HTTPException(status_code=400, detail="Linked source đã bị vô hiệu hóa")
+    logger.info("Invoking linked source '%s' (dt=%d): GET %s", src.name, dt_id, src.base_url)
+    return _do_http_invoke(
+        base_url        = src.base_url,
+        select_fields   = src.select_fields,
+        filter_template = src.filter_template,
+        extra_params    = src.extra_params,
+        use_sap_auth    = src.use_sap_auth,
+        context         = body.context,
+        dt_id           = dt_id,
+        db              = db,
+    )

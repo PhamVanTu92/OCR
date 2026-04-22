@@ -31,6 +31,7 @@ interface Props {
   editData?:   IntegrationConfig | null   // null → create mode
   onClose:     () => void
   onSaved:     () => void
+  hideAuth?:   boolean                    // true → hide auth section (shared via SAP config)
 }
 
 // ── Default empty integration ─────────────────────────────────────────────────
@@ -45,7 +46,7 @@ const emptyConfig = (): Omit<IntegrationConfig, 'id' | 'document_type_id' | 'cre
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function IntegrationConfigModal({
-  open, docType, editData, onClose, onSaved,
+  open, docType, editData, onClose, onSaved, hideAuth = false,
 }: Props) {
   const [tab,    setTab]    = useState<Tab>('basic')
   const [saving, setSaving] = useState(false)
@@ -225,11 +226,12 @@ export default function IntegrationConfigModal({
         is_active:        isActive,
         target_url:       targetUrl.trim() || null,
         http_method:      method,
-        auth_type:        authType || null,
-        auth_header_name: authHeader.trim() || null,
-        auth_value:       authValue.trim() || null,
-        sap_base_url:     sapBaseUrl.trim() || null,
-        sap_company_db:   sapCompanyDb.trim() || null,
+        // When hideAuth, leave auth fields null — SAP connection managed via shared config
+        auth_type:        hideAuth ? null : (authType || null),
+        auth_header_name: hideAuth ? null : (authHeader.trim() || null),
+        auth_value:       hideAuth ? null : (authValue.trim() || null),
+        sap_base_url:     hideAuth ? null : (sapBaseUrl.trim() || null),
+        sap_company_db:   hideAuth ? null : (sapCompanyDb.trim() || null),
         root_key:         rootKey.trim() || null,
         field_mappings:   fieldMappings.filter(f => f.source_key && f.target_key),
         table_mappings:   tableMappings
@@ -375,6 +377,15 @@ export default function IntegrationConfigModal({
                   </div>
                 </div>
 
+                {/* ── Auth section: hidden when using shared SAP connection ─ */}
+                {hideAuth ? (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-2">
+                    <KeyRound size={14} className="text-amber-500 shrink-0" />
+                    <p className="text-xs text-amber-700">
+                      Xác thực SAP B1 dùng chung từ tab <strong>Kết nối SAP B1</strong> — không cần cấu hình lại ở đây.
+                    </p>
+                  </div>
+                ) : (
                 <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -629,6 +640,7 @@ export default function IntegrationConfigModal({
                     </div>
                   )}
                 </div>
+                )} {/* end hideAuth ternary */}
               </div>
 
               {/* Output structure */}

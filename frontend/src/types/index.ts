@@ -471,3 +471,34 @@ export interface DocTypeApiSource {
   updated_at:       string | null
 }
 
+export interface LinkedFieldMapping {
+  api_field: string
+  label:     string
+  ocr_field: string | null
+}
+
+export interface LinkedDisplayColumn {
+  api_field: string
+  label:     string
+}
+
+export interface DocTypeLinkedSource {
+  id:               number
+  document_type_id: number
+  name:             string
+  description:      string | null
+  base_url:         string
+  select_fields:    string | null
+  filter_template:  string | null
+  extra_params:     string | null
+  use_sap_auth:     boolean
+  header_mappings:  LinkedFieldMapping[]
+  lines_key:        string | null        // key in response holding lines array, e.g. "DocumentLines"
+  source_table_key: string | null        // OCR table_key to fill lines into
+  line_mappings:    LinkedFieldMapping[]
+  display_columns:  LinkedDisplayColumn[]
+  is_active:        boolean
+  created_at:       string | null
+  updated_at:       string | null
+}
+

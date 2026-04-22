@@ -50,3 +50,31 @@ class DocTypeApiSource(Base):
     is_active        = Column(Boolean,      nullable=False, default=True)
     created_at       = Column(Unicode(50),  default=_now)
     updated_at       = Column(Unicode(50),  default=_now, onupdate=_now)
+
+
+class DocTypeLinkedSource(Base):
+    """Chứng từ liên kết – truy vấn SAP/ERP, hiển thị picker và gán header + dòng vào chứng từ OCR."""
+    __tablename__ = "doc_type_linked_sources"
+
+    id               = Column(Integer,      primary_key=True, index=True)
+    document_type_id = Column(Integer, ForeignKey("document_types.id"), nullable=False, index=True)
+    name             = Column(Unicode(200), nullable=False)
+    description      = Column(UnicodeText,  nullable=True)
+    base_url         = Column(UnicodeText,  nullable=False)
+    select_fields    = Column(UnicodeText,  nullable=True)
+    filter_template  = Column(UnicodeText,  nullable=True)
+    extra_params     = Column(UnicodeText,  nullable=True)
+    use_sap_auth     = Column(Boolean,      nullable=False, default=True)
+    # JSON: [{api_field, label, ocr_field}]  — root-level fields → OCR header fields
+    header_mappings  = Column(UnicodeText,  nullable=True)
+    # Key inside each result item that holds the lines array, e.g. "DocumentLines"
+    lines_key        = Column(Unicode(100), nullable=True)
+    # OCR table_key to fill lines into
+    source_table_key = Column(Unicode(100), nullable=True)
+    # JSON: [{api_field, label, ocr_field}]  — line-level fields → OCR table columns
+    line_mappings    = Column(UnicodeText,  nullable=True)
+    # JSON: [{api_field, label}]  — columns shown in the picker list UI
+    display_columns  = Column(UnicodeText,  nullable=True)
+    is_active        = Column(Boolean,      nullable=False, default=True)
+    created_at       = Column(Unicode(50),  default=_now)
+    updated_at       = Column(Unicode(50),  default=_now, onupdate=_now)

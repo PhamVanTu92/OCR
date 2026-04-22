@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Plus, Pencil, Trash2, FileText, Link2, X,
+  Plus, Pencil, Trash2, FileText, X,
   CheckCircle2, AlertCircle, Search, FolderOpen, ChevronDown, ChevronUp,
   Settings, Database, KeyRound, Play, Info, Loader2, RefreshCw,
 } from 'lucide-react'
 import { docTypeApi } from '../api/documentTypes'
 import { integrationApi } from '../api/integrations'
 import { docTypeSettingsApi } from '../api/docTypeSettings'
-import type { DocumentCategory, DocumentType, IntegrationConfig, DocTypeSapConfig, DocTypeApiSource, ApiFieldMapping } from '../types'
+import type { LinkedSourcePayload } from '../api/docTypeSettings'
+import type { DocumentCategory, DocumentType, IntegrationConfig, DocTypeSapConfig, DocTypeApiSource, ApiFieldMapping, DocTypeLinkedSource, LinkedFieldMapping, LinkedDisplayColumn } from '../types'
 import DocTypeModal from '../components/DocType/DocTypeModal'
 import IntegrationConfigModal from '../components/Integration/IntegrationConfigModal'
 import Pagination from '../components/Pagination'
@@ -150,17 +151,16 @@ export default function DocumentTypesPage() {
   const [dtModalOpen, setDtModalOpen] = useState(false)
   const [editItem,    setEditItem]    = useState<DocumentType | null>(null)
 
-  // Integration panel (inline, per doc type)
-  const [integrationDt,   setIntegrationDt]   = useState<DocumentType | null>(null)
-  const [integrations,    setIntegrations]     = useState<IntegrationConfig[]>([])
-  const [intLoading,      setIntLoading]       = useState(false)
-  const [intModalOpen,    setIntModalOpen]     = useState(false)
-  const [editIntegration, setEditIntegration]  = useState<IntegrationConfig | null>(null)
-
-  // Settings panel (SAP + API sources, inline per doc type)
+  // Settings panel (SAP + Integration + API sources, inline per doc type)
   const [settingsDt,      setSettingsDt]      = useState<DocumentType | null>(null)
   const [settingsDtFull,  setSettingsDtFull]  = useState<DocumentType | null>(null)  // with fields+tables
-  const [settingsTab,     setSettingsTab]     = useState<'sap' | 'api'>('sap')
+  const [settingsTab,     setSettingsTab]     = useState<'sap' | 'integration' | 'api' | 'linked'>('sap')
+
+  // Integration (inside settings panel, tab 2)
+  const [integrations,    setIntegrations]    = useState<IntegrationConfig[]>([])
+  const [intLoading,      setIntLoading]      = useState(false)
+  const [intModalOpen,    setIntModalOpen]    = useState(false)
+  const [editIntegration, setEditIntegration] = useState<IntegrationConfig | null>(null)
   const [sapCfg,          setSapCfg]          = useState<DocTypeSapConfig | null>(null)
   const [sapLoading,      setSapLoading]      = useState(false)
   const [sapSaving,       setSapSaving]       = useState(false)
@@ -193,6 +193,30 @@ export default function DocumentTypesPage() {
   const [fCategory,  setFCategory] = useState('')
   const [fTableKey,  setFTableKey] = useState('')   // source_table_key (for line_item)
   const [fActive,    setFActive]   = useState(true)
+
+  // Linked sources
+  const [linkedSources,   setLinkedSources]   = useState<DocTypeLinkedSource[]>([])
+  const [linkedLoading,   setLinkedLoading]   = useState(false)
+  const [linkedModal,     setLinkedModal]     = useState(false)
+  const [editLinkedSrc,   setEditLinkedSrc]   = useState<DocTypeLinkedSource | null>(null)
+  const [linkedSaving,    setLinkedSaving]    = useState(false)
+  const [linkedMsg,       setLinkedMsg]       = useState<{ ok: boolean; text: string } | null>(null)
+  const [linkedDeleting,  setLinkedDeleting]  = useState<number | null>(null)
+  const [linkedDetailExp, setLinkedDetailExp] = useState<Record<number, boolean>>({})
+  // linked source form
+  const [lName,    setLName]    = useState('')
+  const [lDesc,    setLDesc]    = useState('')
+  const [lUrl,     setLUrl]     = useState('')
+  const [lSelect,  setLSelect]  = useState('')
+  const [lFilter,  setLFilter]  = useState('')
+  const [lExtra,   setLExtra]   = useState('')
+  const [lSapAuth, setLSapAuth] = useState(true)
+  const [lActive,  setLActive]  = useState(true)
+  const [lHeaderMaps,  setLHeaderMaps]  = useState<LinkedFieldMapping[]>([{ api_field: '', label: '', ocr_field: null }])
+  const [lDisplayCols, setLDisplayCols] = useState<LinkedDisplayColumn[]>([{ api_field: '', label: '' }])
+  const [lLinesKey,    setLLinesKey]    = useState('')
+  const [lTableKey,    setLTableKey]    = useState('')
+  const [lLineMaps,    setLLineMaps]    = useState<LinkedFieldMapping[]>([{ api_field: '', label: '', ocr_field: null }])
 
   // Dynamic placeholders & target fields from the current doc type's schema
   const dtFields = useMemo(() => settingsDtFull?.fields ?? [], [settingsDtFull])
@@ -311,30 +335,21 @@ export default function DocumentTypesPage() {
     setDtModalOpen(true)
   }
 
-  // ── Integration panel ─────────────────────────────────────────────────────
-  const openIntegrations = async (dt: DocumentType) => {
-    if (integrationDt?.id === dt.id) { setIntegrationDt(null); return }
-    setIntegrationDt(dt)
+  // ── Integration helpers (now inside settings panel) ──────────────────────
+  const refreshIntegrations = async (dt?: DocumentType) => {
+    const target = dt ?? settingsDt
+    if (!target) return
     setIntLoading(true)
     try {
-      const { data } = await integrationApi.list(dt.id)
-      setIntegrations(data)
-    } finally { setIntLoading(false) }
-  }
-
-  const refreshIntegrations = async () => {
-    if (!integrationDt) return
-    setIntLoading(true)
-    try {
-      const { data } = await integrationApi.list(integrationDt.id)
+      const { data } = await integrationApi.list(target.id)
       setIntegrations(data)
     } finally { setIntLoading(false) }
   }
 
   const handleDeleteIntegration = async (intId: number) => {
-    if (!integrationDt) return
+    if (!settingsDt) return
     if (!confirm('Xoá cấu hình tích hợp này?')) return
-    await integrationApi.delete(integrationDt.id, intId)
+    await integrationApi.delete(settingsDt.id, intId)
     refreshIntegrations()
   }
 
@@ -345,7 +360,7 @@ export default function DocumentTypesPage() {
     setSettingsDtFull(null)
     setSettingsTab('sap')
     setSapMsg(null); setApiMsg(null)
-    // Load full doc type (fields + tables) for dynamic placeholders
+    // Load full doc type (fields + tables) for dynamic placeholders + integration modal
     docTypeApi.get(dt.id).then(r => setSettingsDtFull(r.data)).catch(() => {})
     // Load SAP config
     setSapLoading(true)
@@ -358,12 +373,22 @@ export default function DocumentTypesPage() {
       setSapPass('')
       setSapActive(data.is_active)
     } finally { setSapLoading(false) }
+    // Load integrations
+    setIntLoading(true)
+    integrationApi.list(dt.id)
+      .then(r => setIntegrations(r.data))
+      .finally(() => setIntLoading(false))
     // Load API sources
     setApiLoading(true)
     try {
       const { data } = await docTypeSettingsApi.listApiSources(dt.id)
       setApiSources(data)
     } finally { setApiLoading(false) }
+    // Load linked sources
+    setLinkedLoading(true)
+    docTypeSettingsApi.listLinkedSources(dt.id)
+      .then(r => setLinkedSources(r.data))
+      .finally(() => setLinkedLoading(false))
   }
 
   const handleSaveSap = async () => {
@@ -475,6 +500,85 @@ export default function DocumentTypesPage() {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       alert(`Lỗi: ${msg ?? 'Gọi API thất bại'}`)
     } finally { setInvoking(null) }
+  }
+
+  // ── Linked source handlers ────────────────────────────────────────────────
+  const loadLinkedSources = async () => {
+    if (!settingsDt) return
+    setLinkedLoading(true)
+    try {
+      const { data } = await docTypeSettingsApi.listLinkedSources(settingsDt.id)
+      setLinkedSources(data)
+    } finally { setLinkedLoading(false) }
+  }
+
+  const openAddLinkedSrc = () => {
+    setEditLinkedSrc(null)
+    setLName(''); setLDesc(''); setLUrl(''); setLSelect(''); setLFilter(''); setLExtra('')
+    setLSapAuth(true); setLActive(true)
+    setLHeaderMaps([{ api_field: '', label: '', ocr_field: null }])
+    setLDisplayCols([{ api_field: '', label: '' }])
+    setLLinesKey(''); setLTableKey('')
+    setLLineMaps([{ api_field: '', label: '', ocr_field: null }])
+    setLinkedMsg(null)
+    setLinkedModal(true)
+  }
+
+  const openEditLinkedSrc = (src: DocTypeLinkedSource) => {
+    setEditLinkedSrc(src)
+    setLName(src.name); setLDesc(src.description ?? ''); setLUrl(src.base_url)
+    setLSelect(src.select_fields ?? ''); setLFilter(src.filter_template ?? '')
+    setLExtra(src.extra_params ?? '')
+    setLSapAuth(src.use_sap_auth); setLActive(src.is_active)
+    setLHeaderMaps(src.header_mappings.length ? src.header_mappings.map(m => ({ ...m })) : [{ api_field: '', label: '', ocr_field: null }])
+    setLDisplayCols(src.display_columns.length ? src.display_columns.map(c => ({ ...c })) : [{ api_field: '', label: '' }])
+    setLLinesKey(src.lines_key ?? ''); setLTableKey(src.source_table_key ?? '')
+    setLLineMaps(src.line_mappings.length ? src.line_mappings.map(m => ({ ...m })) : [{ api_field: '', label: '', ocr_field: null }])
+    setLinkedMsg(null)
+    setLinkedModal(true)
+  }
+
+  const handleSaveLinkedSrc = async () => {
+    if (!settingsDt) return
+    if (!lName.trim()) { setLinkedMsg({ ok: false, text: 'Tên không được trống' }); return }
+    if (!lUrl.trim())  { setLinkedMsg({ ok: false, text: 'Base URL không được trống' }); return }
+    setLinkedSaving(true); setLinkedMsg(null)
+    const payload: LinkedSourcePayload = {
+      name: lName.trim(),
+      description: lDesc || null,
+      base_url: lUrl.trim(),
+      select_fields: lSelect || null,
+      filter_template: lFilter || null,
+      extra_params: lExtra || null,
+      use_sap_auth: lSapAuth,
+      header_mappings: lHeaderMaps.filter(m => m.api_field.trim()),
+      lines_key: lLinesKey || null,
+      source_table_key: lTableKey || null,
+      line_mappings: lLineMaps.filter(m => m.api_field.trim()),
+      display_columns: lDisplayCols.filter(c => c.api_field.trim()),
+      is_active: lActive,
+    }
+    try {
+      if (editLinkedSrc) {
+        await docTypeSettingsApi.updateLinkedSource(settingsDt.id, editLinkedSrc.id, payload)
+      } else {
+        await docTypeSettingsApi.createLinkedSource(settingsDt.id, payload)
+      }
+      setLinkedModal(false)
+      loadLinkedSources()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setLinkedMsg({ ok: false, text: msg ?? 'Lưu thất bại' })
+    } finally { setLinkedSaving(false) }
+  }
+
+  const handleDeleteLinkedSrc = async (id: number) => {
+    if (!settingsDt || !confirm('Xoá chứng từ liên kết này?')) return
+    setLinkedDeleting(id)
+    try {
+      await docTypeSettingsApi.deleteLinkedSource(settingsDt.id, id)
+      setLinkedSources(prev => prev.filter(s => s.id !== id))
+    } finally { setLinkedDeleting(null) }
   }
 
   return (
@@ -688,7 +792,6 @@ export default function DocumentTypesPage() {
                 <React.Fragment key={dt.id}>
                   {/* ── Doc type row ─────────────────────────────────────── */}
                   <tr className={`hover:bg-gray-50 transition-colors
-                    ${integrationDt?.id === dt.id ? 'bg-indigo-50/30' : ''}
                     ${settingsDt?.id === dt.id ? 'bg-amber-50/30' : ''}`}>
                     <td className="table-td text-gray-400 w-12">
                       {(page - 1) * pageSize + idx + 1}
@@ -724,15 +827,8 @@ export default function DocumentTypesPage() {
                           className="text-indigo-400 hover:text-indigo-600 transition-colors">
                           <Pencil size={15} />
                         </button>
-                        <button onClick={() => openIntegrations(dt)}
-                          title="Cấu hình tích hợp"
-                          className={`transition-colors ${integrationDt?.id === dt.id
-                            ? 'text-indigo-600'
-                            : 'text-gray-400 hover:text-indigo-500'}`}>
-                          <Link2 size={15} />
-                        </button>
                         <button onClick={() => openSettings(dt)}
-                          title="Kết nối SAP & API nguồn"
+                          title="Thiết lập kết nối (SAP, Tích hợp, API)"
                           className={`transition-colors ${settingsDt?.id === dt.id
                             ? 'text-amber-600'
                             : 'text-gray-400 hover:text-amber-500'}`}>
@@ -764,13 +860,16 @@ export default function DocumentTypesPage() {
 
                         {/* Tabs */}
                         <div className="flex gap-1 mb-4 border-b border-amber-100">
-                          {(['sap', 'api'] as const).map(tab => (
+                          {(['sap', 'integration', 'api', 'linked'] as const).map(tab => (
                             <button key={tab} onClick={() => setSettingsTab(tab)}
                               className={`px-4 py-2 text-xs font-medium rounded-t-lg transition-colors
                                 ${settingsTab === tab
                                   ? 'bg-white border border-b-white border-amber-200 text-amber-700 -mb-px'
                                   : 'text-gray-500 hover:text-amber-600'}`}>
-                              {tab === 'sap' ? '🔗 Kết nối SAP B1' : '🌐 API nguồn dữ liệu ngoài'}
+                              {tab === 'sap' ? '🔗 Kết nối SAP B1'
+                                : tab === 'integration' ? '⚡ Cấu hình tích hợp'
+                                : tab === 'api' ? '🌐 API nguồn dữ liệu ngoài'
+                                : '🔗 Chứng từ liên kết'}
                             </button>
                           ))}
                         </div>
@@ -866,6 +965,329 @@ export default function DocumentTypesPage() {
                                   </button>
                                 </div>
                               </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Integration Tab */}
+                        {settingsTab === 'integration' && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">
+                                {integrations.length} cấu hình tích hợp
+                              </span>
+                              <button
+                                onClick={() => { setEditIntegration(null); setIntModalOpen(true) }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white
+                                  bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
+                                <Plus size={12} /> Thêm cấu hình
+                              </button>
+                            </div>
+
+                            {intLoading ? (
+                              <div className="text-xs text-gray-400 flex items-center gap-2 py-2">
+                                <Loader2 size={13} className="animate-spin" /> Đang tải...
+                              </div>
+                            ) : integrations.length === 0 ? (
+                              <div className="text-xs text-gray-400 py-6 text-center border
+                                border-dashed border-indigo-200 rounded-lg">
+                                Chưa có cấu hình tích hợp — nhấn <strong>Thêm cấu hình</strong> để khai báo
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {integrations.map(intg => (
+                                  <div key={intg.id}
+                                    className="bg-white border border-gray-200 rounded-lg
+                                      px-4 py-3 flex items-center gap-4">
+                                    <span className={`w-2 h-2 rounded-full shrink-0
+                                      ${intg.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-sm font-medium text-gray-800">
+                                          {intg.name}
+                                        </span>
+                                        <code className="text-xs text-indigo-500 bg-indigo-50
+                                          px-1.5 py-0.5 rounded">
+                                          {intg.code}
+                                        </code>
+                                        {intg.root_key && (
+                                          <span className="text-xs text-gray-400">
+                                            envelope: <code className="text-gray-600">{intg.root_key}</code>
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-4 text-xs text-gray-400 mt-0.5">
+                                        <span>{(intg.field_mappings ?? []).length} field mapping</span>
+                                        <span>{(intg.table_mappings ?? []).length} table mapping</span>
+                                        {intg.target_url ? (
+                                          <span className="text-indigo-500 truncate max-w-xs">
+                                            {intg.http_method} → {intg.target_url}
+                                          </span>
+                                        ) : (
+                                          <span className="italic">Không có endpoint</span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 shrink-0">
+                                      {intg.is_active
+                                        ? <span className="text-xs text-green-600 flex items-center gap-1">
+                                            <CheckCircle2 size={11}/> Kích hoạt
+                                          </span>
+                                        : <span className="text-xs text-gray-400 flex items-center gap-1">
+                                            <AlertCircle size={11}/> Tắt
+                                          </span>}
+                                      <button
+                                        onClick={async () => {
+                                          if (!settingsDt) return
+                                          const { data } = await integrationApi.get(settingsDt.id, intg.id)
+                                          setEditIntegration(data)
+                                          setIntModalOpen(true)
+                                        }}
+                                        className="text-indigo-400 hover:text-indigo-600 transition-colors">
+                                        <Pencil size={13} />
+                                      </button>
+                                      <button onClick={() => handleDeleteIntegration(intg.id)}
+                                        className="text-red-400 hover:text-red-600 transition-colors">
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Shared SAP notice */}
+                            {sapCfg?.sap_base_url && (
+                              <div className="flex items-start gap-2 bg-blue-50 border border-blue-100
+                                rounded-lg px-3 py-2 text-xs text-blue-600 mt-2">
+                                <Info size={12} className="mt-0.5 shrink-0" />
+                                <span>
+                                  Cấu hình tích hợp dùng chung kết nối SAP B1 đã thiết lập ở tab{' '}
+                                  <button onClick={() => setSettingsTab('sap')}
+                                    className="font-medium underline hover:text-blue-800">
+                                    Kết nối SAP B1
+                                  </button>.
+                                  Phần xác thực đã được ẩn và sẽ tự dùng kết nối SAP B1 chung.
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Linked Sources Tab */}
+                        {settingsTab === 'linked' && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">
+                                {linkedSources.length} chứng từ liên kết đã cấu hình
+                              </span>
+                              <button onClick={openAddLinkedSrc}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white
+                                  bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors">
+                                <Plus size={12} /> Thêm nguồn
+                              </button>
+                            </div>
+
+                            {linkedMsg && (
+                              <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm
+                                ${linkedMsg.ok
+                                  ? 'bg-green-50 border border-green-200 text-green-700'
+                                  : 'bg-red-50 border border-red-200 text-red-600'}`}>
+                                {linkedMsg.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                                <span className="flex-1">{linkedMsg.text}</span>
+                                <button onClick={() => setLinkedMsg(null)}><X size={11} /></button>
+                              </div>
+                            )}
+
+                            {linkedLoading ? (
+                              <div className="text-xs text-gray-400 flex items-center gap-2 py-2">
+                                <Loader2 size={13} className="animate-spin" /> Đang tải...
+                              </div>
+                            ) : linkedSources.length === 0 ? (
+                              <div className="text-xs text-gray-400 py-6 text-center border
+                                border-dashed border-amber-200 rounded-lg">
+                                Chưa có chứng từ liên kết — nhấn <strong>Thêm nguồn</strong> để khai báo
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {linkedSources.map(src => {
+                                  const detailOpen = linkedDetailExp[src.id] ?? false
+                                  return (
+                                  <div key={src.id}
+                                    className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                                    {/* Card header row */}
+                                    <div className="px-4 py-3 flex items-start gap-3">
+                                      <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5
+                                        ${src.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-sm font-medium text-gray-800">{src.name}</span>
+                                          {src.lines_key && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium
+                                              bg-purple-50 text-purple-600 border border-purple-100">
+                                              📋 lines: {src.lines_key}
+                                            </span>
+                                          )}
+                                          {src.source_table_key && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium
+                                              bg-blue-50 text-blue-600 border border-blue-100">
+                                              table: {src.source_table_key}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-xs text-gray-400 font-mono truncate mt-0.5">
+                                          {src.base_url}
+                                        </p>
+                                        <p className="text-[11px] text-gray-400 mt-0.5">
+                                          {src.display_columns.length > 0
+                                            ? `${src.display_columns.length} cột hiển thị · `
+                                            : ''}
+                                          {src.header_mappings.length} header map
+                                          {src.line_mappings.length > 0 ? ` · ${src.line_mappings.length} line map` : ''}
+                                          {src.use_sap_auth ? ' · SAP auth' : ''}
+                                          {src.is_active
+                                            ? <span className="ml-1 text-green-600">· Kích hoạt</span>
+                                            : <span className="ml-1 text-gray-400">· Tắt</span>}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        {/* Expand detail toggle */}
+                                        <button
+                                          onClick={() => setLinkedDetailExp(p => ({ ...p, [src.id]: !p[src.id] }))}
+                                          title={detailOpen ? 'Ẩn chi tiết' : 'Xem chi tiết'}
+                                          className="text-gray-400 hover:text-amber-600 transition-colors">
+                                          {detailOpen
+                                            ? <ChevronUp size={13} />
+                                            : <ChevronDown size={13} />}
+                                        </button>
+                                        <button onClick={() => openEditLinkedSrc(src)}
+                                          title="Chỉnh sửa"
+                                          className="text-indigo-400 hover:text-indigo-600 transition-colors">
+                                          <Pencil size={13} />
+                                        </button>
+                                        <button onClick={() => handleDeleteLinkedSrc(src.id)}
+                                          disabled={linkedDeleting === src.id}
+                                          title="Xoá"
+                                          className="text-red-400 hover:text-red-600 disabled:opacity-50
+                                            transition-colors">
+                                          {linkedDeleting === src.id
+                                            ? <Loader2 size={13} className="animate-spin" />
+                                            : <Trash2 size={13} />}
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Expandable detail */}
+                                    {detailOpen && (
+                                      <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-3 space-y-4">
+
+                                        {/* Filter template */}
+                                        {src.filter_template && (
+                                          <div>
+                                            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                                              Filter
+                                            </p>
+                                            <code className="text-xs text-amber-700 bg-amber-50 border border-amber-100
+                                              rounded px-2 py-1 block font-mono break-all">
+                                              {src.filter_template}
+                                            </code>
+                                          </div>
+                                        )}
+
+                                        {/* Display columns */}
+                                        {src.display_columns.length > 0 && (
+                                          <div>
+                                            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                              Cột hiển thị trong picker
+                                            </p>
+                                            <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                                              <thead>
+                                                <tr className="bg-gray-100">
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500 w-1/2">Trường API</th>
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">Nhãn</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-gray-100">
+                                                {src.display_columns.map((c, i) => (
+                                                  <tr key={i} className="bg-white">
+                                                    <td className="px-3 py-1.5 font-mono text-gray-600">{c.api_field || '—'}</td>
+                                                    <td className="px-3 py-1.5 text-gray-700">{c.label || '—'}</td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+
+                                        {/* Header mappings */}
+                                        {src.header_mappings.length > 0 && (
+                                          <div>
+                                            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                              Mapping header → OCR
+                                            </p>
+                                            <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                                              <thead>
+                                                <tr className="bg-gray-100">
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">Trường API</th>
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">Nhãn</th>
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">→ Trường OCR</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-gray-100">
+                                                {src.header_mappings.map((m, i) => (
+                                                  <tr key={i} className="bg-white">
+                                                    <td className="px-3 py-1.5 font-mono text-gray-600">{m.api_field || '—'}</td>
+                                                    <td className="px-3 py-1.5 text-gray-500">{m.label || '—'}</td>
+                                                    <td className="px-3 py-1.5">
+                                                      {m.ocr_field
+                                                        ? <code className="font-mono text-indigo-600 bg-indigo-50 px-1 rounded">{m.ocr_field}</code>
+                                                        : <span className="text-gray-300 italic">không gán</span>}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+
+                                        {/* Line mappings */}
+                                        {src.line_mappings.length > 0 && (
+                                          <div>
+                                            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                              Mapping dòng ({src.lines_key || '?'} → bảng {src.source_table_key || '?'})
+                                            </p>
+                                            <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                                              <thead>
+                                                <tr className="bg-gray-100">
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">Trường API</th>
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">Nhãn</th>
+                                                  <th className="text-left px-3 py-1.5 font-medium text-gray-500">→ Cột OCR</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-gray-100">
+                                                {src.line_mappings.map((m, i) => (
+                                                  <tr key={i} className="bg-white">
+                                                    <td className="px-3 py-1.5 font-mono text-gray-600">{m.api_field || '—'}</td>
+                                                    <td className="px-3 py-1.5 text-gray-500">{m.label || '—'}</td>
+                                                    <td className="px-3 py-1.5">
+                                                      {m.ocr_field
+                                                        ? <code className="font-mono text-purple-600 bg-purple-50 px-1 rounded">{m.ocr_field}</code>
+                                                        : <span className="text-gray-300 italic">không gán</span>}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  )
+                                })}
+                              </div>
                             )}
                           </div>
                         )}
@@ -974,107 +1396,6 @@ export default function DocumentTypesPage() {
                     </tr>
                   )}
 
-                  {/* ── Inline integration panel ──────────────────────────── */}
-                  {integrationDt?.id === dt.id && (
-                    <tr>
-                      <td colSpan={5}
-                        className="bg-indigo-50/40 border-b border-indigo-100 px-6 py-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700">
-                            <Link2 size={15} />
-                            Cấu hình tích hợp — <span className="font-normal">{dt.name}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => { setEditIntegration(null); setIntModalOpen(true) }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white
-                                bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
-                              <Plus size={12} /> Thêm cấu hình
-                            </button>
-                            <button onClick={() => setIntegrationDt(null)}
-                              className="text-gray-400 hover:text-gray-600">
-                              <X size={16} />
-                            </button>
-                          </div>
-                        </div>
-
-                        {intLoading ? (
-                          <p className="text-xs text-gray-400 py-2">Đang tải...</p>
-                        ) : integrations.length === 0 ? (
-                          <div className="text-xs text-gray-400 py-4 text-center border
-                            border-dashed border-indigo-200 rounded-lg">
-                            Chưa có cấu hình tích hợp — nhấn <strong>Thêm cấu hình</strong> để khai báo
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            {integrations.map(intg => (
-                              <div key={intg.id}
-                                className="bg-white border border-gray-200 rounded-lg
-                                  px-4 py-3 flex items-center gap-4">
-                                <span className={`w-2 h-2 rounded-full shrink-0
-                                  ${intg.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
-
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-sm font-medium text-gray-800">
-                                      {intg.name}
-                                    </span>
-                                    <code className="text-xs text-indigo-500 bg-indigo-50
-                                      px-1.5 py-0.5 rounded">
-                                      {intg.code}
-                                    </code>
-                                    {intg.root_key && (
-                                      <span className="text-xs text-gray-400">
-                                        envelope: <code className="text-gray-600">{intg.root_key}</code>
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-4 text-xs text-gray-400 mt-0.5">
-                                    <span>
-                                      {(intg.field_mappings ?? []).length} field mapping
-                                    </span>
-                                    <span>
-                                      {(intg.table_mappings ?? []).length} table mapping
-                                    </span>
-                                    {intg.target_url ? (
-                                      <span className="text-indigo-500 truncate max-w-xs">
-                                        {intg.http_method} → {intg.target_url}
-                                      </span>
-                                    ) : (
-                                      <span className="italic">Không có endpoint</span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-3 shrink-0">
-                                  {intg.is_active
-                                    ? <span className="text-xs text-green-600 flex items-center gap-1">
-                                        <CheckCircle2 size={11}/> Kích hoạt
-                                      </span>
-                                    : <span className="text-xs text-gray-400 flex items-center gap-1">
-                                        <AlertCircle size={11}/> Tắt
-                                      </span>}
-                                  <button
-                                    onClick={async () => {
-                                      const { data } = await integrationApi.get(dt.id, intg.id)
-                                      setEditIntegration(data)
-                                      setIntModalOpen(true)
-                                    }}
-                                    className="text-indigo-400 hover:text-indigo-600 transition-colors">
-                                    <Pencil size={13} />
-                                  </button>
-                                  <button onClick={() => handleDeleteIntegration(intg.id)}
-                                    className="text-red-400 hover:text-red-600 transition-colors">
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )}
                 </React.Fragment>
               ))}
               {!filtered.length && (
@@ -1155,14 +1476,378 @@ export default function DocumentTypesPage() {
         onSaved={() => { setDtModalOpen(false); load() }}
       />
 
-      {integrationDt && (
+      {settingsDt && (
         <IntegrationConfigModal
           open={intModalOpen}
-          docType={integrationDt}
+          docType={settingsDtFull ?? settingsDt}
           editData={editIntegration}
           onClose={() => setIntModalOpen(false)}
           onSaved={() => { setIntModalOpen(false); refreshIntegrations() }}
+          hideAuth={!!(sapCfg?.sap_base_url)}
         />
+      )}
+
+      {/* ── Linked Source Add/Edit Modal ──────────────────────────────────── */}
+      {linkedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
+              <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                <Info size={16} className="text-amber-500" />
+                {editLinkedSrc ? 'Chỉnh sửa chứng từ liên kết' : 'Thêm chứng từ liên kết mới'}
+                {settingsDt && (
+                  <span className="text-xs font-normal text-gray-400 ml-1">— {settingsDt.name}</span>
+                )}
+              </h2>
+              <button onClick={() => setLinkedModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+              {linkedMsg && (
+                <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm
+                  ${linkedMsg.ok
+                    ? 'bg-green-50 border border-green-200 text-green-700'
+                    : 'bg-red-50 border border-red-200 text-red-600'}`}>
+                  {linkedMsg.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                  <span className="flex-1">{linkedMsg.text}</span>
+                  <button onClick={() => setLinkedMsg(null)}><X size={11} /></button>
+                </div>
+              )}
+
+              {/* Section 1 – Cơ bản */}
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cơ bản</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Tên *</label>
+                    <input value={lName} onChange={e => setLName(e.target.value)}
+                      placeholder="VD: SAP Purchase Orders"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Mô tả</label>
+                    <input value={lDesc} onChange={e => setLDesc(e.target.value)}
+                      placeholder="Ghi chú..."
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Base URL *</label>
+                  <input value={lUrl} onChange={e => setLUrl(e.target.value)}
+                    placeholder="https://IP:50000/b1s/v1/PurchaseOrders"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                      focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">$select</label>
+                    <input value={lSelect} onChange={e => setLSelect(e.target.value)}
+                      placeholder="DocEntry,DocNum,CardCode"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Extra params</label>
+                    <input value={lExtra} onChange={e => setLExtra(e.target.value)}
+                      placeholder="$top=100&$orderby=DocDate desc"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                </div>
+
+                {/* $filter with placeholder chips */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    $filter — dùng {'{'}field_key{'}'} từ context chứng từ
+                  </label>
+                  <input value={lFilter} onChange={e => setLFilter(e.target.value)}
+                    placeholder="Cancelled eq 'tNO' and CardCode eq '{field_key}'"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                      focus:outline-none focus:ring-2 focus:ring-amber-400" />
+
+                  {Object.keys(placeholderGroups).length > 0 && (
+                    <div className="mt-2 space-y-1.5">
+                      <span className="text-[11px] text-gray-400 font-medium">
+                        Placeholder khả dụng (trường chứng từ):
+                      </span>
+                      {Object.entries(placeholderGroups).map(([group, fields]) => (
+                        <div key={group} className="flex flex-wrap gap-1 items-center">
+                          <span className="text-[10px] text-gray-300 w-28 shrink-0 truncate">{group}</span>
+                          {fields.map(p => (
+                            <button key={p.key} type="button"
+                              onClick={() => setLFilter(v => v + `{${p.key}}`)}
+                              title={p.label}
+                              className="text-[11px] font-mono bg-amber-50 text-amber-700 border border-amber-200
+                                px-1.5 py-0.5 rounded hover:bg-amber-100 transition-colors whitespace-nowrap">
+                              {`{${p.key}}`}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {Object.keys(placeholderGroups).length === 0 && (
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      {settingsDtFull
+                        ? 'Loại chứng từ này chưa có trường nào được định nghĩa'
+                        : 'Đang tải trường chứng từ...'}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Section 2 – Cột hiển thị trong picker */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Cột hiển thị khi chọn chứng từ liên kết
+                </p>
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-1.5 px-0.5">
+                  {['Trường API (JSON key)', 'Nhãn hiển thị', ''].map(h => (
+                    <span key={h} className="text-[11px] font-medium text-gray-400">{h}</span>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  {lDisplayCols.map((c, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1.5 items-center">
+                      <input value={c.api_field}
+                        onChange={e => setLDisplayCols(p => p.map((x, j) => j === i ? { ...x, api_field: e.target.value } : x))}
+                        placeholder="DocNum"
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                      <input value={c.label}
+                        onChange={e => setLDisplayCols(p => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                        placeholder="Số chứng từ"
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs
+                          focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                      <button onClick={() => setLDisplayCols(p => p.filter((_, j) => j !== i))}
+                        disabled={lDisplayCols.length === 1}
+                        className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setLDisplayCols(p => [...p, { api_field: '', label: '' }])}
+                  className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium">
+                  <Plus size={12} /> Thêm cột
+                </button>
+              </div>
+
+              {/* Section 3 – Gán trường header */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Mapping trường gốc → trường chứng từ OCR
+                </p>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-gray-400">Header field mappings</span>
+                  <button onClick={() => setLHeaderMaps(p => [...p, { api_field: '', label: '', ocr_field: null }])}
+                    className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium">
+                    <Plus size={12} /> Thêm trường
+                  </button>
+                </div>
+                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 px-0.5">
+                  {['Trường API (JSON key)', 'Nhãn hiển thị', 'Trường đích (field_key)', ''].map(h => (
+                    <span key={h} className="text-[11px] font-medium text-gray-400">{h}</span>
+                  ))}
+                </div>
+                <div className="space-y-2">
+                  {lHeaderMaps.map((m, i) => (
+                    <div key={i} className="space-y-1">
+                      <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
+                        <input value={m.api_field}
+                          onChange={e => setLHeaderMaps(p => p.map((x, j) => j === i ? { ...x, api_field: e.target.value } : x))}
+                          placeholder="CardCode"
+                          className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        <input value={m.label}
+                          onChange={e => setLHeaderMaps(p => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                          placeholder="Nhãn hiển thị"
+                          className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs
+                            focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        <input value={m.ocr_field ?? ''}
+                          onChange={e => setLHeaderMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: e.target.value || null } : x))}
+                          placeholder="field_key đích..."
+                          className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        <button onClick={() => setLHeaderMaps(p => p.filter((_, j) => j !== i))}
+                          disabled={lHeaderMaps.length === 1}
+                          className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      {/* Quick-pick target header fields */}
+                      {dtFields.length > 0 && (
+                        <div className="flex flex-wrap gap-1 ml-0.5">
+                          {dtFields
+                            .slice().sort((a, b) => a.sort_order - b.sort_order)
+                            .map(tf => (
+                            <button key={tf.field_key} type="button"
+                              onClick={() => setLHeaderMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: tf.field_key } : x))}
+                              title={tf.field_name}
+                              className={`text-[10px] font-mono px-1 py-0.5 rounded border transition-colors
+                                ${m.ocr_field === tf.field_key
+                                  ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                  : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-amber-50 hover:text-amber-600'}`}>
+                              {tf.field_key}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Section 4 – Cấu hình dòng chi tiết */}
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Cấu hình dòng chi tiết
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Key chứa mảng dòng trong response (để trống nếu không có)
+                    </label>
+                    <input value={lLinesKey} onChange={e => setLLinesKey(e.target.value)}
+                      placeholder="DocumentLines"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono
+                        focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Bảng OCR cần gán dòng
+                    </label>
+                    {dtTables.length === 0 ? (
+                      <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        Loại chứng từ này chưa có bảng dữ liệu nào
+                      </div>
+                    ) : (
+                      <select value={lTableKey} onChange={e => setLTableKey(e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                          focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white">
+                        <option value="">— Không gán dòng</option>
+                        {dtTables.map(t => (
+                          <option key={t.table_key} value={t.table_key}>
+                            {t.table_name} ({t.columns.length} cột)
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                {/* Line mappings — only shown when lLinesKey or lTableKey is set */}
+                {(lLinesKey || lTableKey) && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-gray-400">Line field mappings</span>
+                      <button onClick={() => setLLineMaps(p => [...p, { api_field: '', label: '', ocr_field: null }])}
+                        className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium">
+                        <Plus size={12} /> Thêm trường
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 px-0.5">
+                      {['Trường API (JSON key)', 'Nhãn hiển thị', 'Cột đích (column_key)', ''].map(h => (
+                        <span key={h} className="text-[11px] font-medium text-gray-400">{h}</span>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      {lLineMaps.map((m, i) => {
+                        const tableColumns = lTableKey
+                          ? (dtTables.find(t => t.table_key === lTableKey)?.columns ?? [])
+                          : []
+                        return (
+                          <div key={i} className="space-y-1">
+                            <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
+                              <input value={m.api_field}
+                                onChange={e => setLLineMaps(p => p.map((x, j) => j === i ? { ...x, api_field: e.target.value } : x))}
+                                placeholder="ItemCode"
+                                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                                  focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                              <input value={m.label}
+                                onChange={e => setLLineMaps(p => p.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                                placeholder="Nhãn hiển thị"
+                                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs
+                                  focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                              <input value={m.ocr_field ?? ''}
+                                onChange={e => setLLineMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: e.target.value || null } : x))}
+                                placeholder="column_key đích..."
+                                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                                  focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                              <button onClick={() => setLLineMaps(p => p.filter((_, j) => j !== i))}
+                                disabled={lLineMaps.length === 1}
+                                className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                            {/* Quick-pick from table columns */}
+                            {tableColumns.length > 0 && (
+                              <div className="flex flex-wrap gap-1 ml-0.5">
+                                {tableColumns
+                                  .slice().sort((a, b) => a.sort_order - b.sort_order)
+                                  .map(tc => (
+                                  <button key={tc.column_key} type="button"
+                                    onClick={() => setLLineMaps(p => p.map((x, j) => j === i ? { ...x, ocr_field: tc.column_key } : x))}
+                                    title={tc.column_name}
+                                    className={`text-[10px] font-mono px-1 py-0.5 rounded border transition-colors
+                                      ${m.ocr_field === tc.column_key
+                                        ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-amber-50 hover:text-amber-600'}`}>
+                                    {tc.column_key}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Section 5 – Tùy chọn */}
+              <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input type="checkbox" checked={lSapAuth} onChange={e => setLSapAuth(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 rounded" />
+                  <KeyRound size={13} className="text-amber-500" />
+                  Dùng xác thực SAP B1
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input type="checkbox" checked={lActive} onChange={e => setLActive(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 rounded" />
+                  Kích hoạt
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-2 px-6 py-4 border-t shrink-0">
+              <button onClick={() => setLinkedModal(false)}
+                className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
+                Huỷ
+              </button>
+              <button onClick={handleSaveLinkedSrc} disabled={linkedSaving}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm text-white
+                  bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-60 transition-colors">
+                {linkedSaving
+                  ? <><Loader2 size={14} className="animate-spin" /> Đang lưu...</>
+                  : editLinkedSrc ? 'Cập nhật' : 'Thêm mới'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── API Source Add/Edit Modal ─────────────────────────────────────── */}

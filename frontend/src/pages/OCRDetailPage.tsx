@@ -4,11 +4,13 @@ import {
   ArrowLeft, Calendar, FileText, Clock, CheckCircle2, XCircle,
   Loader2, RefreshCw, AlertCircle, Pencil, Save, X, Plus, Trash2,
   ShieldCheck, ShieldOff, PenLine, Link2, Send, Eye, ChevronDown, ChevronRight,
+  PanelLeftClose, PanelLeftOpen, Search,
 } from 'lucide-react'
 import { ocrApi } from '../api/ocr'
 import { docTypeApi } from '../api/documentTypes'
 import { integrationApi } from '../api/integrations'
-import type { Document, DocumentType, IntegrationConfig, ExportLogResponse } from '../types'
+import { docTypeSettingsApi } from '../api/docTypeSettings'
+import type { Document, DocumentType, IntegrationConfig, ExportLogResponse, DocTypeApiSource, DocTypeLinkedSource } from '../types'
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUS_MAP: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
@@ -47,6 +49,22 @@ export default function OCRDetailPage() {
   const [unconfirming, setUnconfirming] = useState(false)
   const [retrying,     setRetrying]     = useState(false)
 
+  // ── API Sources (auto-fill on load) ──────────────────────────────────────
+  const [apiSources,    setApiSources]    = useState<DocTypeApiSource[]>([])
+  const autoInvokedRef = useRef(false)
+
+  // ── Linked sources picker ────────────────────────────────────────────────────
+  const [linkedSources,     setLinkedSources]     = useState<DocTypeLinkedSource[]>([])
+  const [linkedExpanded,    setLinkedExpanded]    = useState(false)
+  // per-source state keyed by src.id
+  const [lSearching,        setLSearching]        = useState<Record<number, boolean>>({})
+  const [lResults,          setLResults]          = useState<Record<number, Record<string, unknown>[]>>({})
+  const [lSelected,         setLSelected]         = useState<Record<number, Record<string, unknown> | null>>({})
+  const [lSrcExpanded,      setLSrcExpanded]      = useState<Record<number, boolean>>({})
+  const [lApplying,         setLApplying]         = useState<number | null>(null)
+  const [lShowTargets,      setLShowTargets]      = useState(false)
+  const autoLinkedSearchRef = useRef(false)
+
   // ── Integration / export state ────────────────────────────────────────────
   const [integrations,   setIntegrations]   = useState<IntegrationConfig[]>([])
   const [intExpanded,    setIntExpanded]     = useState(false)
@@ -56,6 +74,9 @@ export default function OCRDetailPage() {
   const [exportingId,    setExportingId]     = useState<number | null>(null)
   const [exportLogs,     setExportLogs]      = useState<ExportLogResponse[]>([])
   const [logsExpanded,   setLogsExpanded]    = useState(false)
+
+  // ── Layout ───────────────────────────────────────────────────────────────────
+  const [showFile, setShowFile] = useState(true)
 
   // ── Per-table pagination ─────────────────────────────────────────────────────
   const [tablePagination, setTablePagination] =
@@ -89,6 +110,18 @@ export default function OCRDetailPage() {
       try {
         const { data: ints } = await integrationApi.list(data.document_type_id)
         setIntegrations(ints.filter(i => i.is_active))
+      } catch { /* non-critical */ }
+
+      // Load API sources for fill-from-API feature
+      try {
+        const { data: srcs } = await docTypeSettingsApi.listApiSources(data.document_type_id)
+        setApiSources(srcs.filter(s => s.is_active))
+      } catch { /* non-critical */ }
+
+      // Load linked sources for picker
+      try {
+        const { data: lsrcs } = await docTypeSettingsApi.listLinkedSources(data.document_type_id)
+        setLinkedSources(lsrcs.filter(s => s.is_active))
       } catch { /* non-critical */ }
 
       try {
@@ -231,6 +264,189 @@ export default function OCRDetailPage() {
     setExportLogs(data)
     setLogsExpanded(true)
   }
+
+  // ── Linked source picker handlers ────────────────────────────────────────────
+  const handleLinkedSearch = async (src: DocTypeLinkedSource, silent = false) => {
+    if (!doc || !docType) return
+    setLSearching(prev => ({ ...prev, [src.id]: true }))
+    setLSelected(prev => ({ ...prev, [src.id]: null }))
+    const ctx: Record<string, string | null> = {}
+    Object.entries(doc.result?.extracted_fields ?? {}).forEach(([k, v]) => {
+      ctx[k] = v != null ? String(v) : null
+    })
+    try {
+      const { data: res } = await docTypeSettingsApi.invokeLinkedSource(docType.id, src.id, ctx)
+      setLResults(prev => ({ ...prev, [src.id]: res.data }))
+      // auto-expand this source when results arrive
+      if (res.count > 0)
+        setLSrcExpanded(prev => ({ ...prev, [src.id]: true }))
+    } catch (e: unknown) {
+      if (!silent) {
+        const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        alert(`Lỗi: ${msg ?? 'Gọi API thất bại'}`)
+      }
+    } finally {
+      setLSearching(prev => ({ ...prev, [src.id]: false }))
+    }
+  }
+
+  // Auto-search all linked sources on page load
+  useEffect(() => {
+    if (!doc || !docType || !linkedSources.length) return
+    if (doc.status !== 'completed' && doc.status !== 'confirmed') return
+    if (autoLinkedSearchRef.current) return
+    autoLinkedSearchRef.current = true
+    setLinkedExpanded(true)
+    linkedSources.forEach(src => handleLinkedSearch(src, true))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.id, doc?.status, docType?.id, linkedSources.length])
+
+  const handleLinkedApply = async (src: DocTypeLinkedSource) => {
+    if (!doc) return
+    const row = lSelected[src.id]
+    if (!row) return
+    setLApplying(src.id)
+
+    // Snapshot current data
+    const snapFields: Record<string, string> = editMode
+      ? { ...editFields }
+      : Object.fromEntries(Object.entries(doc.result?.extracted_fields ?? {}).map(([k, v]) => [k, toStr(v)]))
+    const snapTables: Record<string, Record<string, string>[]> = editMode
+      ? Object.fromEntries(Object.entries(editTables).map(([tk, rows]) => [tk, rows.map(r => ({ ...r }))]))
+      : Object.fromEntries(
+          Object.entries(doc.result?.extracted_tables ?? {}).map(([tKey, rows]) => [
+            tKey,
+            (rows as Record<string, unknown>[]).map(r =>
+              Object.fromEntries(Object.entries(r).map(([k, v]) => [k, toStr(v)]))
+            ),
+          ])
+        )
+
+    if (!editMode) {
+      setEditFields(snapFields); setEditTables(snapTables)
+      setSaveError(''); setEditMode(true)
+    }
+
+    // Apply header mappings
+    if (src.header_mappings.length) {
+      const patch: Record<string, string> = {}
+      src.header_mappings.forEach(m => {
+        if (m.ocr_field && row[m.api_field] != null)
+          patch[m.ocr_field] = toStr(row[m.api_field])
+      })
+      setEditFields(prev => ({ ...prev, ...patch }))
+    }
+
+    // Apply line mappings
+    if (src.lines_key && src.source_table_key && src.line_mappings.length) {
+      const rawLines = row[src.lines_key]
+      if (Array.isArray(rawLines)) {
+        const newRows: Record<string, string>[] = rawLines.map(line => {
+          const r: Record<string, string> = { ...(snapTables[src.source_table_key!]?.[0] ?? {}) }
+          // clear existing values
+          Object.keys(r).forEach(k => { r[k] = '' })
+          src.line_mappings.forEach(m => {
+            if (m.ocr_field && (line as Record<string, unknown>)[m.api_field] != null)
+              r[m.ocr_field] = toStr((line as Record<string, unknown>)[m.api_field])
+          })
+          return r
+        })
+        setEditTables(prev => ({ ...prev, [src.source_table_key!]: newRows }))
+      }
+    }
+
+    setLApplying(null)
+  }
+
+  // ── Auto-invoke API sources and save silently ────────────────────────────────
+  // Runs once when doc (completed) + docType + apiSources are all loaded.
+  // Calls each header/line_item source, merges results, then patches the result.
+  useEffect(() => {
+    if (!doc || !docType || !apiSources.length) return
+    if (doc.status !== 'completed') return
+    if (autoInvokedRef.current) return
+
+    const autoSrcs = apiSources.filter(
+      s => s.category === 'header' || s.category === 'line_item'
+    )
+    if (!autoSrcs.length) return
+
+    autoInvokedRef.current = true
+
+    ;(async () => {
+      // Working copies — accumulate changes across all sources
+      let wFields: Record<string, string> = Object.fromEntries(
+        Object.entries(doc.result?.extracted_fields ?? {}).map(([k, v]) => [k, toStr(v)])
+      )
+      let wTables: Record<string, Record<string, string>[]> = Object.fromEntries(
+        Object.entries(doc.result?.extracted_tables ?? {}).map(([tKey, rows]) => [
+          tKey,
+          (rows as Record<string, unknown>[]).map(row =>
+            Object.fromEntries(Object.entries(row).map(([k, v]) => [k, toStr(v)]))
+          ),
+        ])
+      )
+      let changed = false
+
+      for (const src of autoSrcs) {
+        try {
+          if (src.category === 'line_item' && src.source_table_key) {
+            const tableKey = src.source_table_key
+            const rows = wTables[tableKey] ?? []
+            const newRows = rows.map(r => ({ ...r }))
+
+            for (let i = 0; i < rows.length; i++) {
+              const ctx: Record<string, string | null> = {}
+              Object.entries(wFields).forEach(([k, v]) => { ctx[k] = v || null })
+              Object.entries(rows[i]).forEach(([k, v]) => { ctx[k] = v || null })
+              try {
+                const { data: res } = await docTypeSettingsApi.invokeApiSource(
+                  docType.id, src.id, ctx
+                )
+                if (res.success && res.count > 0) {
+                  const hit = res.data[0]
+                  src.field_mappings.forEach(m => {
+                    if (m.ocr_field && hit[m.api_field] != null) {
+                      newRows[i] = { ...newRows[i], [m.ocr_field]: toStr(hit[m.api_field]) }
+                      changed = true
+                    }
+                  })
+                }
+              } catch { /* skip row */ }
+            }
+            wTables = { ...wTables, [tableKey]: newRows }
+
+          } else {
+            const ctx: Record<string, string | null> = {}
+            Object.entries(wFields).forEach(([k, v]) => { ctx[k] = v || null })
+            const { data: res } = await docTypeSettingsApi.invokeApiSource(
+              docType.id, src.id, ctx
+            )
+            if (res.success && res.count > 0) {
+              const hit = res.data[0]
+              src.field_mappings.forEach(m => {
+                if (m.ocr_field && hit[m.api_field] != null) {
+                  wFields = { ...wFields, [m.ocr_field]: toStr(hit[m.api_field]) }
+                  changed = true
+                }
+              })
+            }
+          }
+        } catch { /* skip source */ }
+      }
+
+      if (changed) {
+        try {
+          const { data: updated } = await ocrApi.updateResult(doc.id, {
+            extracted_fields: wFields as Record<string, unknown>,
+            extracted_tables: wTables as Record<string, Record<string, unknown>[]>,
+          })
+          setDoc(updated)
+        } catch { /* silent — user can still edit manually */ }
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.id, doc?.status, docType?.id, apiSources.length])
 
   // ── Build lookup maps ─────────────────────────────────────────────────────────
   const fieldNameMap: Record<string, string> = {}
@@ -383,36 +599,56 @@ export default function OCRDetailPage() {
       {/* ── Body ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Left: file preview */}
-        <div className="w-1/2 flex flex-col border-r border-gray-200 bg-gray-100 min-w-0">
-          <div className="px-4 py-2 bg-white border-b text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">
-            File gốc
-          </div>
-          <div className="flex-1 overflow-hidden">
-            {fileUrl ? (
-              isImage ? (
-                <div className="h-full overflow-auto flex items-start justify-center p-4">
-                  <img src={fileUrl} alt={doc.file_name}
-                    className="max-w-full shadow-lg rounded" />
-                </div>
+        {/* Left: file preview (collapsible) */}
+        {showFile && (
+          <div className="w-1/2 flex flex-col border-r border-gray-200 bg-gray-100 min-w-0 shrink-0">
+            <div className="px-4 py-2 bg-white border-b text-xs font-semibold text-gray-400
+              uppercase tracking-wider shrink-0 flex items-center justify-between">
+              <span>File gốc</span>
+              <button
+                onClick={() => setShowFile(false)}
+                title="Ẩn file gốc"
+                className="text-gray-400 hover:text-gray-600 transition-colors">
+                <PanelLeftClose size={14}/>
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {fileUrl ? (
+                isImage ? (
+                  <div className="h-full overflow-auto flex items-start justify-center p-4">
+                    <img src={fileUrl} alt={doc.file_name}
+                      className="max-w-full shadow-lg rounded" />
+                  </div>
+                ) : (
+                  <iframe src={fileUrl} title="Document preview" className="w-full h-full border-0"/>
+                )
               ) : (
-                <iframe src={fileUrl} title="Document preview" className="w-full h-full border-0"/>
-              )
-            ) : (
-              <div className="flex items-center justify-center h-full text-sm text-gray-400">
-                <div className="text-center">
-                  <FileText size={32} className="mx-auto mb-2 opacity-40"/>
-                  <p>Không thể xem trước file</p>
+                <div className="flex items-center justify-center h-full text-sm text-gray-400">
+                  <div className="text-center">
+                    <FileText size={32} className="mx-auto mb-2 opacity-40"/>
+                    <p>Không thể xem trước file</p>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Right: data panel */}
-        <div className="w-1/2 flex flex-col min-w-0">
-          <div className="px-4 py-2 bg-white border-b text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0 flex items-center justify-between">
-            <span>Kết quả trích xuất</span>
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="px-4 py-2 bg-white border-b text-xs font-semibold text-gray-400
+            uppercase tracking-wider shrink-0 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowFile(v => !v)}
+                title={showFile ? 'Ẩn file gốc' : 'Hiện file gốc'}
+                className="text-gray-400 hover:text-gray-600 transition-colors">
+                {showFile
+                  ? <PanelLeftClose size={14}/>
+                  : <PanelLeftOpen  size={14}/>}
+              </button>
+              <span>Kết quả trích xuất</span>
+            </div>
             {editMode && (
               <span className="text-indigo-500 normal-case font-normal">Đang chỉnh sửa…</span>
             )}
@@ -440,6 +676,312 @@ export default function OCRDetailPage() {
             {/* Completed / Confirmed */}
             {(doc.status === 'completed' || doc.status === 'confirmed') && (
               <div className="p-5 space-y-6">
+
+                {/* ── Linked Sources (top, auto-loaded) ──────────────── */}
+                {linkedSources.length > 0 && (
+                  <section className="border border-indigo-200 rounded-lg overflow-hidden">
+                    {/* Section header — click to toggle all */}
+                    <button
+                      onClick={() => setLinkedExpanded(o => !o)}
+                      className="w-full flex items-center justify-between px-4 py-2.5
+                        bg-indigo-50 hover:bg-indigo-100 transition-colors text-left">
+                      <div className="flex items-center gap-2 text-sm font-medium text-indigo-800">
+                        <Link2 size={14} className="text-indigo-500"/>
+                        Chứng từ liên kết
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {/* Summary badges per source */}
+                        {linkedSources.map(src => {
+                          const cnt = lResults[src.id]?.length
+                          const isLoading = lSearching[src.id]
+                          return (
+                            <span key={src.id}
+                              className={`text-[11px] px-2 py-0.5 rounded-full font-medium
+                                ${isLoading
+                                  ? 'bg-gray-100 text-gray-400'
+                                  : cnt === undefined
+                                    ? 'bg-gray-100 text-gray-400'
+                                    : cnt > 0
+                                      ? 'bg-indigo-100 text-indigo-700'
+                                      : 'bg-gray-100 text-gray-400'}`}>
+                              {isLoading
+                                ? <span className="flex items-center gap-1">
+                                    <Loader2 size={10} className="animate-spin"/>
+                                    {src.name}
+                                  </span>
+                                : `${src.name}: ${cnt ?? '…'} kết quả`}
+                            </span>
+                          )
+                        })}
+                        {linkedExpanded
+                          ? <ChevronDown  size={14} className="text-indigo-400"/>
+                          : <ChevronRight size={14} className="text-indigo-400"/>}
+                      </div>
+                    </button>
+
+                    {linkedExpanded && (
+                      <div className="divide-y divide-indigo-100">
+                        {linkedSources.map(src => {
+                          const results    = lResults[src.id] ?? []
+                          const selected   = lSelected[src.id] ?? null
+                          const srcLoading = lSearching[src.id] ?? false
+                          const srcOpen    = lSrcExpanded[src.id] ?? false
+                          const dispCols   = src.display_columns.length
+                            ? src.display_columns
+                            : Object.keys(results[0] ?? {})
+                                .filter(k => k !== src.lines_key)
+                                .slice(0, 5)
+                                .map(k => ({ api_field: k, label: k }))
+
+                          return (
+                            <div key={src.id}>
+                              {/* Per-source row — click to expand/collapse results */}
+                              <button
+                                onClick={() => setLSrcExpanded(prev => ({
+                                  ...prev, [src.id]: !prev[src.id],
+                                }))}
+                                className="w-full flex items-center justify-between px-4 py-2.5
+                                  hover:bg-gray-50 transition-colors text-left">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {srcLoading
+                                    ? <Loader2 size={13} className="animate-spin text-indigo-400 shrink-0"/>
+                                    : results.length > 0
+                                      ? <CheckCircle2 size={13} className="text-green-500 shrink-0"/>
+                                      : <AlertCircle  size={13} className="text-gray-300 shrink-0"/>}
+                                  <span className="text-sm font-medium text-gray-800">
+                                    {src.name}
+                                  </span>
+                                  {!srcLoading && lResults[src.id] !== undefined && (
+                                    <span className={`text-xs px-1.5 py-0.5 rounded-full
+                                      ${results.length > 0
+                                        ? 'bg-indigo-50 text-indigo-600'
+                                        : 'bg-gray-100 text-gray-400'}`}>
+                                      {results.length} phù hợp
+                                    </span>
+                                  )}
+                                  {src.description && (
+                                    <span className="text-xs text-gray-400 truncate hidden sm:block">
+                                      — {src.description}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {/* Refresh button */}
+                                  <span
+                                    role="button"
+                                    onClick={e => { e.stopPropagation(); handleLinkedSearch(src) }}
+                                    className="text-gray-300 hover:text-indigo-500 transition-colors p-0.5"
+                                    title="Tải lại">
+                                    <RefreshCw size={12}
+                                      className={srcLoading ? 'animate-spin text-indigo-400' : ''}/>
+                                  </span>
+                                  {srcOpen
+                                    ? <ChevronDown  size={13} className="text-gray-400"/>
+                                    : <ChevronRight size={13} className="text-gray-400"/>}
+                                </div>
+                              </button>
+
+                              {/* Results table (per-source collapsible) */}
+                              {srcOpen && (
+                                <div className="px-4 pb-3 space-y-2">
+                                  {srcLoading ? (
+                                    <div className="flex items-center gap-2 py-4 justify-center
+                                      text-xs text-gray-400">
+                                      <Loader2 size={13} className="animate-spin"/> Đang tải...
+                                    </div>
+                                  ) : results.length === 0 ? (
+                                    <div className="text-xs text-gray-400 py-4 text-center
+                                      border border-dashed border-gray-200 rounded-lg">
+                                      Không tìm thấy chứng từ phù hợp với điều kiện đã thiết lập
+                                    </div>
+                                  ) : (
+                                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                      <div className="overflow-auto max-h-56">
+                                        <table className="w-full text-xs">
+                                          <thead>
+                                            <tr className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                                              {dispCols.map(c => (
+                                                <th key={c.api_field}
+                                                  className="px-3 py-2 text-left font-semibold
+                                                    text-gray-500 whitespace-nowrap">
+                                                  {c.label}
+                                                </th>
+                                              ))}
+                                              <th className="w-6"/>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-gray-100">
+                                            {results.map((row, ri) => {
+                                              const isSel = selected === row
+                                              return (
+                                                <tr key={ri}
+                                                  onClick={() => setLSelected(prev => ({
+                                                    ...prev,
+                                                    [src.id]: isSel ? null : row,
+                                                  }))}
+                                                  className={`cursor-pointer transition-colors
+                                                    ${isSel
+                                                      ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300'
+                                                      : 'hover:bg-gray-50'}`}>
+                                                  {dispCols.map(c => (
+                                                    <td key={c.api_field}
+                                                      className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                                                      {toStr(row[c.api_field])}
+                                                    </td>
+                                                  ))}
+                                                  <td className="px-2 text-center">
+                                                    {isSel && (
+                                                      <CheckCircle2 size={12} className="text-indigo-500"/>
+                                                    )}
+                                                  </td>
+                                                </tr>
+                                              )
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+
+                                      {/* Footer: status + apply button */}
+                                      <div className="flex items-center justify-between
+                                        px-3 py-2 border-t border-gray-100 bg-gray-50">
+                                        <span className="text-xs text-gray-400">
+                                          {selected
+                                            ? '✓ Đã chọn — nhấn Áp dụng để điền vào chứng từ'
+                                            : 'Nhấn vào dòng để chọn chứng từ'}
+                                        </span>
+                                        <button
+                                          onClick={() => handleLinkedApply(src)}
+                                          disabled={!selected || lApplying === src.id}
+                                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5
+                                            text-xs text-white bg-indigo-600 rounded-lg
+                                            hover:bg-indigo-700 transition-colors disabled:opacity-40">
+                                          {lApplying === src.id
+                                            ? <><Loader2 size={11} className="animate-spin"/> Đang áp dụng...</>
+                                            : <><CheckCircle2 size={11}/> Áp dụng</>}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* ── Detail preview of selected row ── */}
+                                  {selected && (() => {
+                                    const hdrMaps = src.header_mappings.filter(m => m.api_field)
+                                    const lnMaps  = src.line_mappings.filter(m => m.api_field)
+                                    const rawLines = src.lines_key ? selected[src.lines_key] : null
+                                    const lines   = Array.isArray(rawLines) ? rawLines as Record<string, unknown>[] : []
+                                    if (!hdrMaps.length && !lnMaps.length) return null
+                                    return (
+                                      <div className="border border-indigo-200 rounded-lg overflow-hidden bg-indigo-50/40">
+                                        {/* Card header + toggle */}
+                                        <div className="px-3 py-2 bg-indigo-50 border-b border-indigo-100
+                                          flex items-center justify-between">
+                                          <span className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wide flex items-center gap-1.5">
+                                            <CheckCircle2 size={11} className="text-indigo-500"/>
+                                            Chi tiết chứng từ đã chọn
+                                          </span>
+                                          <button
+                                            onClick={() => setLShowTargets(v => !v)}
+                                            title={lShowTargets ? 'Ẩn cột đích' : 'Hiện cột đích'}
+                                            className={`text-[10px] px-2 py-0.5 rounded border transition-colors
+                                              ${lShowTargets
+                                                ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
+                                                : 'bg-white text-gray-400 border-gray-200 hover:text-indigo-600 hover:border-indigo-200'}`}>
+                                            {lShowTargets ? '↩ Ẩn cột đích' : '↩ Cột đích'}
+                                          </button>
+                                        </div>
+
+                                        {/* Header fields */}
+                                        {hdrMaps.length > 0 && (
+                                          <div className="px-3 pt-2.5 pb-1">
+                                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                              Thông tin header
+                                            </p>
+                                            <table className="w-full text-xs">
+                                              <tbody>
+                                                {hdrMaps.map((m, mi) => (
+                                                  <tr key={mi} className={mi % 2 === 0 ? 'bg-white/60' : ''}>
+                                                    <td className="py-1 pr-2 text-gray-500 whitespace-nowrap w-2/5 font-medium">
+                                                      {m.label || m.api_field}
+                                                    </td>
+                                                    <td className="py-1 text-gray-800">
+                                                      {selected[m.api_field] != null && selected[m.api_field] !== ''
+                                                        ? toStr(selected[m.api_field])
+                                                        : <span className="text-gray-300 italic">–</span>}
+                                                    </td>
+                                                    {lShowTargets && m.ocr_field && (
+                                                      <td className="py-1 pl-2 text-right whitespace-nowrap">
+                                                        <code className="text-[10px] font-mono text-indigo-500
+                                                          bg-indigo-50 px-1 rounded">
+                                                          → {m.ocr_field}
+                                                        </code>
+                                                      </td>
+                                                    )}
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+
+                                        {/* Lines preview */}
+                                        {lnMaps.length > 0 && lines.length > 0 && (
+                                          <div className="px-3 pt-2 pb-3">
+                                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                              Dòng chi tiết ({lines.length} dòng
+                                              {lShowTargets && src.source_table_key
+                                                ? ` → bảng ${src.source_table_key}`
+                                                : ''})
+                                            </p>
+                                            <div className="border border-gray-200 rounded overflow-hidden">
+                                              <div className="overflow-auto max-h-40">
+                                                <table className="w-full text-xs">
+                                                  <thead>
+                                                    <tr className="bg-gray-100 sticky top-0">
+                                                      <th className="px-2 py-1 text-left text-gray-400 font-medium w-6">#</th>
+                                                      {lnMaps.map(m => (
+                                                        <th key={m.api_field}
+                                                          className="px-2 py-1 text-left text-gray-500 font-medium whitespace-nowrap">
+                                                          {m.label || m.api_field}
+                                                          {lShowTargets && m.ocr_field && (
+                                                            <span className="ml-1 text-[9px] font-mono text-indigo-400">
+                                                              →{m.ocr_field}
+                                                            </span>
+                                                          )}
+                                                        </th>
+                                                      ))}
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody className="divide-y divide-gray-100">
+                                                    {lines.map((ln, li) => (
+                                                      <tr key={li} className="bg-white">
+                                                        <td className="px-2 py-1 text-gray-400 text-center">{li + 1}</td>
+                                                        {lnMaps.map(m => (
+                                                          <td key={m.api_field} className="px-2 py-1 text-gray-700 whitespace-nowrap">
+                                                            {ln[m.api_field] != null && ln[m.api_field] !== ''
+                                                              ? toStr(ln[m.api_field])
+                                                              : <span className="text-gray-300 italic">–</span>}
+                                                          </td>
+                                                        ))}
+                                                      </tr>
+                                                    ))}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </section>
+                )}
 
                 {/* ── Fields ─────────────────────────────────────────────── */}
                 {Object.keys(displayFields).length > 0 && (
