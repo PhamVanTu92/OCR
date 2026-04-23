@@ -431,6 +431,24 @@ export interface InvokeApiSourceResult {
   url_called: string
 }
 
+export interface PurchaseInvoiceLinkedSource {
+  id:              number
+  name:            string
+  description:     string | null
+  base_url:        string
+  select_fields:   string | null
+  filter_template: string | null
+  extra_params:    string | null
+  use_sap_auth:    boolean
+  header_mappings: LinkedFieldMapping[]
+  lines_key:       string | null
+  line_mappings:   LinkedFieldMapping[]
+  display_columns: LinkedDisplayColumn[]
+  is_active:       boolean
+  created_at:      string | null
+  updated_at:      string | null
+}
+
 export interface SapPOItem {
   POItem?:      string
   Material?:    string

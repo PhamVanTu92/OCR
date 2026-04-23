@@ -324,6 +324,7 @@ export default function SavedInvoicesPage() {
         <InvoiceDetailDrawer
           invoice={detailInv}
           apiSources={apiSources}
+          linkedSources={[]}
           savedInvIds={new Set(invoices.map(r => r.inv_id))}
           onSaved={() => loadSaved()}
           onClose={() => { setDetailInv(null); setDetailSaved(null) }}

@@ -9,6 +9,9 @@ import type {
   ExternalApiSource,
   ApiFieldMapping,
   InvokeApiSourceResult,
+  PurchaseInvoiceLinkedSource,
+  LinkedFieldMapping,
+  LinkedDisplayColumn,
 } from '../types'
 
 export interface InvoiceListParams {
@@ -154,6 +157,51 @@ export const purchaseInvoiceApi = {
   invokeApiSource: (id: number, context: Record<string, string | null>) =>
     client.post<InvokeApiSourceResult>(
       `/purchase-invoices/config/api-sources/${id}/invoke`,
+      { context },
+    ),
+
+  // ── Linked Sources ────────────────────────────────────────────────────────
+  listLinkedSources: () =>
+    client.get<PurchaseInvoiceLinkedSource[]>('/purchase-invoices/config/linked-sources'),
+
+  createLinkedSource: (data: {
+    name: string
+    description?: string | null
+    base_url: string
+    select_fields?: string | null
+    filter_template?: string | null
+    extra_params?: string | null
+    use_sap_auth?: boolean
+    header_mappings?: LinkedFieldMapping[]
+    lines_key?: string | null
+    line_mappings?: LinkedFieldMapping[]
+    display_columns?: LinkedDisplayColumn[]
+    is_active?: boolean
+  }) =>
+    client.post<PurchaseInvoiceLinkedSource>('/purchase-invoices/config/linked-sources', data),
+
+  updateLinkedSource: (id: number, data: Partial<{
+    name: string
+    description: string | null
+    base_url: string
+    select_fields: string | null
+    filter_template: string | null
+    extra_params: string | null
+    use_sap_auth: boolean
+    header_mappings: LinkedFieldMapping[]
+    lines_key: string | null
+    line_mappings: LinkedFieldMapping[]
+    display_columns: LinkedDisplayColumn[]
+    is_active: boolean
+  }>) =>
+    client.put<PurchaseInvoiceLinkedSource>(`/purchase-invoices/config/linked-sources/${id}`, data),
+
+  deleteLinkedSource: (id: number) =>
+    client.delete(`/purchase-invoices/config/linked-sources/${id}`),
+
+  invokeLinkedSource: (id: number, context: Record<string, string | null>) =>
+    client.post<InvokeApiSourceResult>(
+      `/purchase-invoices/config/linked-sources/${id}/invoke`,
       { context },
     ),
 }

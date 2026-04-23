@@ -58,6 +58,10 @@ async def extract_text_from_file(file_path: str) -> str:
         return _extract_pdf(file_path)
     elif ext in SUPPORTED_MIME:
         return _extract_image(file_path)
+    elif ext == ".docx":
+        return _extract_docx(file_path)
+    elif ext == ".xlsx":
+        return _extract_xlsx(file_path)
     else:
         raise ValueError(f"Unsupported file extension: {ext!r}")
 
@@ -100,3 +104,82 @@ def _extract_image(file_path: str) -> str:
     logger.info("Extracting text from image '%s'", file_path)
     response = model.generate_content([_OCR_PROMPT, pil_img])
     return response.text
+
+
+# ─── DOCX ─────────────────────────────────────────────────────────────────────
+
+def _extract_docx(file_path: str) -> str:
+    """
+    Extract text from a .docx file using python-docx.
+    Paragraphs are returned as-is; tables are rendered as pipe-separated rows.
+    The resulting text is then sent to Gemini for structured extraction (same
+    pipeline as PDF/image — only the OCR step is replaced by direct parsing).
+    """
+    try:
+        from docx import Document as DocxDocument
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+        from docx.oxml.ns import qn
+    except ImportError:
+        raise RuntimeError("python-docx is required: pip install python-docx")
+
+    logger.info("Extracting text from DOCX '%s'", file_path)
+    doc = DocxDocument(file_path)
+    parts: list[str] = []
+
+    def _table_to_text(tbl: Table) -> str:
+        rows = []
+        for row in tbl.rows:
+            cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+            rows.append(" | ".join(cells))
+        return "\n".join(rows)
+
+    # Iterate body elements in document order (paragraphs + tables interleaved)
+    for block in doc.element.body:
+        tag = block.tag.split("}")[-1] if "}" in block.tag else block.tag
+        if tag == "p":
+            para = Paragraph(block, doc)
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+        elif tag == "tbl":
+            tbl = Table(block, doc)
+            parts.append(_table_to_text(tbl))
+
+    raw_text = "\n".join(parts)
+    logger.debug("DOCX extracted %d chars", len(raw_text))
+    return raw_text
+
+
+# ─── XLSX ─────────────────────────────────────────────────────────────────────
+
+def _extract_xlsx(file_path: str) -> str:
+    """
+    Extract data from a .xlsx file using openpyxl.
+    Each sheet is rendered as a markdown-style table separated by a sheet header.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise RuntimeError("openpyxl is required: pip install openpyxl")
+
+    logger.info("Extracting text from XLSX '%s'", file_path)
+    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    sheets_text: list[str] = []
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows: list[str] = []
+        for row in ws.iter_rows(values_only=True):
+            # Skip completely empty rows
+            if all(v is None or str(v).strip() == "" for v in row):
+                continue
+            cells = [str(v) if v is not None else "" for v in row]
+            rows.append("\t".join(cells))
+        if rows:
+            sheets_text.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows))
+
+    wb.close()
+    raw_text = "\n\n".join(sheets_text)
+    logger.debug("XLSX extracted %d chars", len(raw_text))
+    return raw_text

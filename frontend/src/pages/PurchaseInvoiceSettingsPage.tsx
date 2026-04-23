@@ -3,13 +3,14 @@ import {
   Settings, RefreshCw, CheckCircle2, AlertCircle,
   X, Loader2, KeyRound, Receipt, Plus, Pencil, Trash2, Save,
   Database, ChevronDown, ChevronRight,
-  Link2, Play, Info,
+  Link2, Play, Info, FileText,
 } from 'lucide-react'
 import { purchaseInvoiceApi } from '../api/purchaseInvoices'
 import type { TestSapLoginResponse } from '../api/purchaseInvoices'
 import type {
   PurchaseInvoiceConfig,
   ExternalApiSource, ApiFieldMapping, InvokeApiSourceResult,
+  PurchaseInvoiceLinkedSource, LinkedFieldMapping, LinkedDisplayColumn,
 } from '../types'
 
 type Err = { response?: { data?: { detail?: string } } }
@@ -597,6 +598,601 @@ function ExternalApiSection() {
   )
 }
 
+// ─── Linked Source section ────────────────────────────────────────────────────
+
+const EMPTY_LINKED_FIELD: LinkedFieldMapping  = { api_field: '', label: '', ocr_field: null }
+const EMPTY_DISPLAY_COL:  LinkedDisplayColumn = { api_field: '', label: '' }
+
+// Quick-fill chips for header mapping targets (fields of PurchaseInvoiceItem)
+const LINKED_HEADER_TARGET_FIELDS = [
+  { key: 'NBanMa',      label: 'NBanMa – Mã người bán' },
+  { key: 'SupplierCode', label: 'SupplierCode – Mã NCC SAP' },
+  { key: 'NBanTen',     label: 'NBanTen – Tên người bán' },
+  { key: 'NBanMST',     label: 'NBanMST – MST người bán' },
+]
+
+// Quick-fill chips for line mapping targets (fields of PurchaseInvoiceLineItem)
+const LINKED_LINE_TARGET_FIELDS = [
+  { key: 'ItemCode', label: 'ItemCode – Mã hàng SAP' },
+  { key: 'ItemName', label: 'ItemName – Tên hàng SAP' },
+  { key: 'UomId',   label: 'UomId – ĐVT SAP' },
+  { key: 'TaxCode', label: 'TaxCode – Mã thuế SAP' },
+  { key: 'MHHDVu',  label: 'MHHDVu – Mã hàng trên HĐ' },
+  { key: 'DVTinh',  label: 'DVTinh – ĐVT trên HĐ' },
+]
+
+function LinkedSourceSection() {
+  const [items,    setItems]    = useState<PurchaseInvoiceLinkedSource[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState('')
+  const [success,  setSuccess]  = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [editing,  setEditing]  = useState<PurchaseInvoiceLinkedSource | null>(null)
+  const [saving,   setSaving]   = useState(false)
+  const [deleting, setDeleting] = useState<number | null>(null)
+
+  // Form fields
+  const [fName,    setFName]    = useState('')
+  const [fDesc,    setFDesc]    = useState('')
+  const [fUrl,     setFUrl]     = useState('')
+  const [fSelect,  setFSelect]  = useState('')
+  const [fFilter,  setFFilter]  = useState('')
+  const [fExtra,   setFExtra]   = useState('')
+  const [fSapAuth, setFSapAuth] = useState(true)
+  const [fActive,  setFActive]  = useState(true)
+  const [fHeaderMaps,   setFHeaderMaps]   = useState<LinkedFieldMapping[]>([{ ...EMPTY_LINKED_FIELD }])
+  const [fLinesKey,     setFLinesKey]     = useState('')
+  const [fLineMaps,     setFLineMaps]     = useState<LinkedFieldMapping[]>([{ ...EMPTY_LINKED_FIELD }])
+  const [fDisplayCols,  setFDisplayCols]  = useState<LinkedDisplayColumn[]>([{ ...EMPTY_DISPLAY_COL }])
+
+  // Invoke state
+  const [invoking,   setInvoking]   = useState<number | null>(null)
+  const [invokeRes,  setInvokeRes]  = useState<(InvokeApiSourceResult & { source_id: number }) | null>(null)
+
+  const urlPreview = useMemo(
+    () => buildUrlPreview(fUrl, fSelect, fFilter, fExtra),
+    [fUrl, fSelect, fFilter, fExtra],
+  )
+
+  const load = () => {
+    setLoading(true)
+    purchaseInvoiceApi.listLinkedSources()
+      .then(r => setItems(r.data))
+      .catch(() => setError('Không thể tải danh sách chứng từ liên kết'))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [])
+
+  const resetForm = () => {
+    setFName(''); setFDesc(''); setFUrl(''); setFSelect(''); setFFilter(''); setFExtra('')
+    setFSapAuth(true); setFActive(true)
+    setFHeaderMaps([{ ...EMPTY_LINKED_FIELD }])
+    setFLinesKey('')
+    setFLineMaps([{ ...EMPTY_LINKED_FIELD }])
+    setFDisplayCols([{ ...EMPTY_DISPLAY_COL }])
+  }
+  const openAdd = () => { setEditing(null); resetForm(); setShowForm(true) }
+  const openEdit = (src: PurchaseInvoiceLinkedSource) => {
+    setEditing(src)
+    setFName(src.name); setFDesc(src.description ?? ''); setFUrl(src.base_url)
+    setFSelect(src.select_fields ?? ''); setFFilter(src.filter_template ?? '')
+    setFExtra(src.extra_params ?? ''); setFSapAuth(src.use_sap_auth); setFActive(src.is_active)
+    setFHeaderMaps(src.header_mappings.length ? src.header_mappings.map(m => ({ ...m })) : [{ ...EMPTY_LINKED_FIELD }])
+    setFLinesKey(src.lines_key ?? '')
+    setFLineMaps(src.line_mappings.length ? src.line_mappings.map(m => ({ ...m })) : [{ ...EMPTY_LINKED_FIELD }])
+    setFDisplayCols(src.display_columns.length ? src.display_columns.map(c => ({ ...c })) : [{ ...EMPTY_DISPLAY_COL }])
+    setShowForm(true)
+  }
+  const cancelForm = () => { setShowForm(false); setEditing(null) }
+
+  const handleSave = async () => {
+    if (!fName.trim()) { setError('Tên không được trống'); return }
+    if (!fUrl.trim())  { setError('Base URL không được trống'); return }
+    setSaving(true); setError(''); setSuccess('')
+    const payload = {
+      name: fName.trim(), description: fDesc || null,
+      base_url: fUrl.trim(),
+      select_fields: fSelect || null,
+      filter_template: fFilter || null,
+      extra_params: fExtra || null,
+      use_sap_auth: fSapAuth,
+      is_active: fActive,
+      header_mappings:  fHeaderMaps.filter(m => m.api_field.trim()),
+      lines_key:        fLinesKey || null,
+      line_mappings:    fLineMaps.filter(m => m.api_field.trim()),
+      display_columns:  fDisplayCols.filter(c => c.api_field.trim()),
+    }
+    try {
+      if (editing) {
+        await purchaseInvoiceApi.updateLinkedSource(editing.id, payload)
+        setSuccess('Đã cập nhật chứng từ liên kết!')
+      } else {
+        await purchaseInvoiceApi.createLinkedSource(payload)
+        setSuccess('Đã tạo chứng từ liên kết!')
+      }
+      load(); cancelForm()
+    } catch (e: unknown) {
+      setError((e as Err)?.response?.data?.detail ?? 'Lỗi lưu')
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Xoá chứng từ liên kết này?')) return
+    setDeleting(id)
+    try {
+      await purchaseInvoiceApi.deleteLinkedSource(id)
+      setItems(prev => prev.filter(i => i.id !== id))
+      setSuccess('Đã xoá!')
+    } catch { setError('Xoá thất bại') }
+    finally { setDeleting(null) }
+  }
+
+  const handleInvoke = async (src: PurchaseInvoiceLinkedSource) => {
+    setInvoking(src.id); setInvokeRes(null); setError('')
+    try {
+      const r = await purchaseInvoiceApi.invokeLinkedSource(src.id, {})
+      setInvokeRes({ ...r.data, source_id: src.id })
+    } catch (e: unknown) {
+      setError((e as Err)?.response?.data?.detail ?? 'Gọi API thất bại')
+    } finally { setInvoking(null) }
+  }
+
+  // Mapping helpers
+  const updateHeaderMap = (i: number, p: Partial<LinkedFieldMapping>) =>
+    setFHeaderMaps(prev => prev.map((m, idx) => idx === i ? { ...m, ...p } : m))
+  const updateLineMap   = (i: number, p: Partial<LinkedFieldMapping>) =>
+    setFLineMaps(prev => prev.map((m, idx) => idx === i ? { ...m, ...p } : m))
+  const updateDispCol   = (i: number, p: Partial<LinkedDisplayColumn>) =>
+    setFDisplayCols(prev => prev.map((c, idx) => idx === i ? { ...c, ...p } : c))
+
+  return (
+    <div className="px-6 py-4 space-y-4">
+
+      {/* Messages */}
+      {error && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">
+          <AlertCircle size={13} /> <span className="flex-1">{error}</span>
+          <button onClick={() => setError('')}><X size={11} /></button>
+        </div>
+      )}
+      {success && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
+          <CheckCircle2 size={13} /> <span className="flex-1">{success}</span>
+          <button onClick={() => setSuccess('')}><X size={11} /></button>
+        </div>
+      )}
+
+      {/* Add / Edit form */}
+      {showForm && (
+        <div className="border border-violet-200 rounded-xl bg-violet-50/20 p-5 space-y-5">
+          <p className="text-xs font-semibold text-violet-700 flex items-center gap-1.5">
+            <FileText size={13} />
+            {editing ? 'Chỉnh sửa chứng từ liên kết' : 'Thêm chứng từ liên kết mới'}
+          </p>
+
+          {/* Basic info */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Tên *">
+              <input value={fName} onChange={e => setFName(e.target.value)}
+                placeholder="VD: SAP Purchase Orders" className={inputCls} />
+            </Field>
+            <Field label="Mô tả">
+              <input value={fDesc} onChange={e => setFDesc(e.target.value)}
+                placeholder="Ghi chú..." className={inputCls} />
+            </Field>
+          </div>
+
+          {/* Endpoint */}
+          <Field label={<span className="flex items-center gap-1"><Link2 size={11} className="text-violet-400"/>Base URL *</span>}>
+            <input value={fUrl} onChange={e => setFUrl(e.target.value)}
+              placeholder="https://172.16.10.1:50000/b1s/v1/PurchaseOrders"
+              className={`${inputCls} font-mono text-xs`} />
+          </Field>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Trường lấy dữ liệu ($select)">
+              <input value={fSelect} onChange={e => setFSelect(e.target.value)}
+                placeholder="DocNum,DocDate,CardCode,DocTotal"
+                className={`${inputCls} font-mono text-xs`} />
+            </Field>
+            <Field label="Tham số thêm (extra)">
+              <input value={fExtra} onChange={e => setFExtra(e.target.value)}
+                placeholder="$top=50&$orderby=DocDate desc"
+                className={`${inputCls} font-mono text-xs`} />
+            </Field>
+          </div>
+
+          {/* Filter template */}
+          <Field label="Điều kiện lọc ($filter) – dùng {placeholder} từ dữ liệu hóa đơn">
+            <input value={fFilter} onChange={e => setFFilter(e.target.value)}
+              placeholder="CardCode eq '{NBanMa}' and DocumentStatus eq 'bost_Open'"
+              className={`${inputCls} font-mono text-xs`} />
+            <div className="mt-2 space-y-1.5">
+              <span className="text-[11px] text-gray-400 font-medium">Placeholder khả dụng (context hóa đơn):</span>
+              {(() => {
+                const groups: Record<string, typeof HEADER_PLACEHOLDERS> = {}
+                HEADER_PLACEHOLDERS.forEach(p => {
+                  if (!groups[p.group]) groups[p.group] = []
+                  groups[p.group].push(p)
+                })
+                return Object.entries(groups).map(([group, fields]) => (
+                  <div key={group} className="flex flex-wrap gap-1 items-center">
+                    <span className="text-[10px] text-gray-300 w-20 shrink-0">{group}</span>
+                    {fields.map(p => (
+                      <button key={p.key} type="button"
+                        onClick={() => setFFilter(v => v + `{${p.key}}`)}
+                        title={p.label}
+                        className="text-[11px] font-mono bg-violet-50 text-violet-600 border border-violet-100
+                          px-1.5 py-0.5 rounded hover:bg-violet-100 transition-colors whitespace-nowrap">
+                        {`{${p.key}}`}
+                      </button>
+                    ))}
+                  </div>
+                ))
+              })()}
+            </div>
+          </Field>
+
+          {/* URL preview */}
+          {urlPreview && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <p className="text-[11px] text-gray-400 font-medium mb-1">URL preview:</p>
+              <p className="text-[11px] font-mono text-gray-700 break-all leading-relaxed">{urlPreview}</p>
+            </div>
+          )}
+
+          {/* Display columns */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                <Info size={11} className="text-violet-400" /> Cột hiển thị kết quả
+              </label>
+              <button onClick={() => setFDisplayCols(p => [...p, { ...EMPTY_DISPLAY_COL }])}
+                className="text-xs text-violet-600 hover:text-violet-800 flex items-center gap-1 font-medium">
+                <Plus size={12}/> Thêm cột
+              </button>
+            </div>
+            <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-0.5">
+              <span className="text-[11px] font-medium text-gray-400">Trường API (JSON key)</span>
+              <span className="text-[11px] font-medium text-gray-400">Nhãn hiển thị</span>
+              <span/>
+            </div>
+            {fDisplayCols.map((c, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                <input value={c.api_field}
+                  onChange={e => updateDispCol(i, { api_field: e.target.value })}
+                  placeholder="VD: DocNum" className={`${inputCls} font-mono text-xs`}/>
+                <input value={c.label}
+                  onChange={e => updateDispCol(i, { label: e.target.value })}
+                  placeholder="VD: Số PO" className={inputCls}/>
+                <button onClick={() => setFDisplayCols(p => p.filter((_, idx) => idx !== i))}
+                  disabled={fDisplayCols.length === 1}
+                  className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors">
+                  <Trash2 size={14}/>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Header mappings */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                <Info size={11} className="text-indigo-400" /> Mapping header HĐ → trường đích
+              </label>
+              <button onClick={() => setFHeaderMaps(p => [...p, { ...EMPTY_LINKED_FIELD }])}
+                className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-medium">
+                <Plus size={12}/> Thêm
+              </button>
+            </div>
+            <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 px-0.5">
+              <span className="text-[11px] font-medium text-gray-400">Trường API</span>
+              <span className="text-[11px] font-medium text-gray-400">Nhãn</span>
+              <span className="text-[11px] font-medium text-gray-400">Trường HĐ đích</span>
+              <span/>
+            </div>
+            {fHeaderMaps.map((m, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-start">
+                <input value={m.api_field}
+                  onChange={e => updateHeaderMap(i, { api_field: e.target.value })}
+                  placeholder="VD: CardCode" className={`${inputCls} font-mono text-xs`}/>
+                <input value={m.label}
+                  onChange={e => updateHeaderMap(i, { label: e.target.value })}
+                  placeholder="VD: Mã NCC" className={inputCls}/>
+                <div className="space-y-1">
+                  <input value={m.ocr_field ?? ''}
+                    onChange={e => updateHeaderMap(i, { ocr_field: e.target.value || null })}
+                    placeholder="VD: NBanMa" className={`${inputCls} font-mono text-xs`}/>
+                  <div className="flex flex-wrap gap-1">
+                    {LINKED_HEADER_TARGET_FIELDS.map(t => (
+                      <button key={t.key} type="button"
+                        onClick={() => updateHeaderMap(i, { ocr_field: t.key })}
+                        title={t.label}
+                        className={`text-[10px] font-mono px-1 py-0.5 rounded border transition-colors
+                          ${m.ocr_field === t.key
+                            ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                            : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-indigo-50 hover:text-indigo-600'}`}>
+                        {t.key}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={() => setFHeaderMaps(p => p.filter((_, idx) => idx !== i))}
+                  disabled={fHeaderMaps.length === 1}
+                  className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors mt-2">
+                  <Trash2 size={14}/>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Lines key + line mappings */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <label className="text-xs font-medium text-gray-600 flex items-center gap-1 shrink-0">
+                <Info size={11} className="text-amber-400" /> Key chứa dòng hàng trong response:
+              </label>
+              <input value={fLinesKey} onChange={e => setFLinesKey(e.target.value)}
+                placeholder="VD: DocumentLines (để trống nếu không có)"
+                className={`${inputCls} font-mono text-xs max-w-xs`}/>
+            </div>
+            {fLinesKey.trim() && (
+              <>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                    <Info size={11} className="text-amber-400" /> Mapping dòng hàng → trường đích
+                  </label>
+                  <button onClick={() => setFLineMaps(p => [...p, { ...EMPTY_LINKED_FIELD }])}
+                    className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium">
+                    <Plus size={12}/> Thêm
+                  </button>
+                </div>
+                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 px-0.5">
+                  <span className="text-[11px] font-medium text-gray-400">Trường API</span>
+                  <span className="text-[11px] font-medium text-gray-400">Nhãn</span>
+                  <span className="text-[11px] font-medium text-gray-400">Trường dòng hàng đích</span>
+                  <span/>
+                </div>
+                {fLineMaps.map((m, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-start">
+                    <input value={m.api_field}
+                      onChange={e => updateLineMap(i, { api_field: e.target.value })}
+                      placeholder="VD: ItemCode" className={`${inputCls} font-mono text-xs`}/>
+                    <input value={m.label}
+                      onChange={e => updateLineMap(i, { label: e.target.value })}
+                      placeholder="VD: Mã hàng" className={inputCls}/>
+                    <div className="space-y-1">
+                      <input value={m.ocr_field ?? ''}
+                        onChange={e => updateLineMap(i, { ocr_field: e.target.value || null })}
+                        placeholder="VD: ItemCode" className={`${inputCls} font-mono text-xs`}/>
+                      <div className="flex flex-wrap gap-1">
+                        {LINKED_LINE_TARGET_FIELDS.map(t => (
+                          <button key={t.key} type="button"
+                            onClick={() => updateLineMap(i, { ocr_field: t.key })}
+                            title={t.label}
+                            className={`text-[10px] font-mono px-1 py-0.5 rounded border transition-colors
+                              ${m.ocr_field === t.key
+                                ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-amber-50 hover:text-amber-600'}`}>
+                            {t.key}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <button onClick={() => setFLineMaps(p => p.filter((_, idx) => idx !== i))}
+                      disabled={fLineMaps.length === 1}
+                      className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors mt-2">
+                      <Trash2 size={14}/>
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* Options */}
+          <div className="flex items-center gap-5">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+              <input type="checkbox" checked={fSapAuth}
+                onChange={e => setFSapAuth(e.target.checked)}
+                className="accent-indigo-600 w-4 h-4"/>
+              Dùng SAP B1 Authentication
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+              <input type="checkbox" checked={fActive}
+                onChange={e => setFActive(e.target.checked)}
+                className="accent-indigo-600 w-4 h-4"/>
+              Kích hoạt
+            </label>
+          </div>
+
+          {/* Form actions */}
+          <div className="flex gap-2 pt-1 border-t border-violet-100">
+            <button onClick={handleSave} disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-violet-600
+                rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors">
+              {saving ? <><Loader2 size={13} className="animate-spin"/> Đang lưu...</> : <><Save size={13}/> Lưu</>}
+            </button>
+            <button onClick={cancelForm}
+              className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+              Hủy
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Invoke result */}
+      {invokeRes && (
+        <div className="border border-green-200 rounded-xl bg-green-50/30 p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-green-700 flex items-center gap-1.5">
+              <CheckCircle2 size={13}/> Kết quả ({invokeRes.count} bản ghi)
+            </p>
+            <button onClick={() => setInvokeRes(null)} className="text-gray-400 hover:text-gray-600">
+              <X size={14}/>
+            </button>
+          </div>
+          <p className="text-[11px] font-mono text-gray-400 break-all">{invokeRes.url_called}</p>
+          {invokeRes.data.length > 0 && (
+            <div className="overflow-x-auto rounded-lg border border-green-200 bg-white max-h-64">
+              <table className="w-full text-xs">
+                <thead className="bg-green-50 sticky top-0">
+                  <tr>
+                    {Object.keys(invokeRes.data[0]).slice(0, 8).map(k => (
+                      <th key={k} className="px-2 py-1.5 text-left text-green-700 font-semibold whitespace-nowrap">{k}</th>
+                    ))}
+                    {Object.keys(invokeRes.data[0]).length > 8 && <th className="px-2 py-1.5 text-gray-400">…</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-green-100">
+                  {invokeRes.data.slice(0, 10).map((row, i) => (
+                    <tr key={i} className="hover:bg-green-50/50">
+                      {Object.values(row).slice(0, 8).map((v, j) => (
+                        <td key={j} className="px-2 py-1.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate font-mono text-[11px]">
+                          {v == null ? <span className="text-gray-300">null</span> : String(v)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {invokeRes.count > 10 && (
+            <p className="text-[11px] text-gray-400 italic">Hiển thị 10/{invokeRes.count} bản ghi</p>
+          )}
+        </div>
+      )}
+
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
+          <Loader2 size={14} className="animate-spin"/> Đang tải...
+        </div>
+      ) : (
+        <>
+          {items.length === 0 && !showForm ? (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              <FileText size={28} className="mx-auto mb-2 opacity-20"/>
+              <p>Chưa có chứng từ liên kết. Nhấn "+ Thêm" để khai báo.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {items.map(src => (
+                <div key={src.id} className="border border-gray-200 rounded-xl bg-white overflow-hidden">
+                  {/* Row header */}
+                  <div className="flex items-start gap-3 px-4 py-3">
+                    <FileText size={15} className="text-violet-400 mt-0.5 shrink-0"/>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-gray-800 text-sm">{src.name}</span>
+                        {src.use_sap_auth && (
+                          <span className="text-[11px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">SAP B1</span>
+                        )}
+                        {src.is_active
+                          ? <span className="text-[11px] text-green-600 font-medium">✓ Hoạt động</span>
+                          : <span className="text-[11px] text-gray-400">Tắt</span>}
+                      </div>
+                      {src.description && (
+                        <p className="text-[11px] text-gray-400 mt-0.5">{src.description}</p>
+                      )}
+                      <p className="text-[11px] font-mono text-gray-500 mt-0.5 truncate" title={src.base_url}>{src.base_url}</p>
+                      {src.filter_template && (
+                        <p className="text-[11px] font-mono text-gray-400 truncate mt-0.5" title={src.filter_template}>
+                          $filter: {src.filter_template}
+                        </p>
+                      )}
+                    </div>
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={() => handleInvoke(src)}
+                        disabled={invoking === src.id || !src.is_active}
+                        title="Gọi thử API"
+                        className="text-green-500 hover:text-green-700 disabled:opacity-30 transition-colors">
+                        {invoking === src.id
+                          ? <Loader2 size={14} className="animate-spin"/>
+                          : <Play size={14}/>}
+                      </button>
+                      <button onClick={() => openEdit(src)}
+                        className="text-indigo-400 hover:text-indigo-600 transition-colors">
+                        <Pencil size={14}/>
+                      </button>
+                      <button onClick={() => handleDelete(src.id)} disabled={deleting === src.id}
+                        className="text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors">
+                        {deleting === src.id ? <Loader2 size={14} className="animate-spin"/> : <Trash2 size={14}/>}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Detail: display columns + header mappings */}
+                  {(src.display_columns.length > 0 || src.header_mappings.length > 0 || src.line_mappings.length > 0) && (
+                    <div className="border-t border-gray-100 px-4 py-3 space-y-3 bg-gray-50/50">
+                      {src.display_columns.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-semibold text-gray-500 mb-1">Cột hiển thị</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {src.display_columns.map((c, i) => (
+                              <span key={i} className="text-[11px] bg-white border border-gray-200 rounded px-2 py-0.5">
+                                <span className="font-mono text-gray-600">{c.api_field}</span>
+                                {c.label !== c.api_field && <span className="text-gray-400 ml-1">({c.label})</span>}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {src.header_mappings.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-semibold text-gray-500 mb-1">Header mapping</p>
+                          <div className="space-y-0.5">
+                            {src.header_mappings.map((m, i) => (
+                              <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                                <span className="font-mono text-indigo-600 bg-indigo-50 px-1 rounded">{m.api_field}</span>
+                                <span className="text-gray-400">{m.label}</span>
+                                {m.ocr_field && <>
+                                  <span className="text-gray-300">→</span>
+                                  <span className="font-mono text-violet-600 bg-violet-50 px-1 rounded">{m.ocr_field}</span>
+                                </>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {src.lines_key && src.line_mappings.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-semibold text-gray-500 mb-1">
+                            Dòng hàng (<span className="font-mono">{src.lines_key}</span>) mapping
+                          </p>
+                          <div className="space-y-0.5">
+                            {src.line_mappings.map((m, i) => (
+                              <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                                <span className="font-mono text-amber-600 bg-amber-50 px-1 rounded">{m.api_field}</span>
+                                <span className="text-gray-400">{m.label}</span>
+                                {m.ocr_field && <>
+                                  <span className="text-gray-300">→</span>
+                                  <span className="font-mono text-violet-600 bg-violet-50 px-1 rounded">{m.ocr_field}</span>
+                                </>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <button onClick={openAdd}
+            className="flex items-center gap-1.5 text-sm text-violet-600 hover:text-violet-800 transition-colors font-medium">
+            <Plus size={15}/> Thêm chứng từ liên kết
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+
 // ─── Main Settings Page ───────────────────────────────────────────────────────
 export default function PurchaseInvoiceSettingsPage() {
   const [cfg,         setCfg]         = useState<PurchaseInvoiceConfig | null>(null)
@@ -613,6 +1209,7 @@ export default function PurchaseInvoiceSettingsPage() {
   const [matbaoOpen,   setMatbaoOpen]   = useState(true)
   const [sapOpen,      setSapOpen]      = useState(true)
   const [apiOpen,      setApiOpen]      = useState(false)
+  const [linkedOpen,   setLinkedOpen]   = useState(false)
 
   useEffect(() => {
     purchaseInvoiceApi.getConfig()
@@ -843,6 +1440,17 @@ export default function PurchaseInvoiceSettingsPage() {
               onToggle={() => setApiOpen(v => !v)}
             />
             {apiOpen && <ExternalApiSection />}
+          </div>
+
+          {/* ── Linked Sources ─────────────────────────────────────────── */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <SectionHeader
+              icon={<FileText size={16} />}
+              title="Chứng từ liên kết"
+              expanded={linkedOpen}
+              onToggle={() => setLinkedOpen(v => !v)}
+            />
+            {linkedOpen && <LinkedSourceSection />}
           </div>
         </>
       )}
