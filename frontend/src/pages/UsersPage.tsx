@@ -285,18 +285,6 @@ function UserDrawer({
     } finally { setSaving(false) }
   }
 
-  const assignRole = async () => {
-    if (!selRoleId) return
-    try {
-      await usersApi.assignRole(user.id, Number(selRoleId))
-      setSelRoleId('')
-      onRefresh()
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      alert(msg || 'Lỗi khi gán vai trò')
-    }
-  }
-
   const removeRole = async (roleId: number) => {
     try {
       await usersApi.removeRole(user.id, roleId)
@@ -420,19 +408,28 @@ function UserDrawer({
                 <div className="flex gap-2">
                   <select
                     value={selRoleId}
-                    onChange={e => setSelRoleId(Number(e.target.value))}
+                    onChange={async e => {
+                      const id = Number(e.target.value)
+                      if (!id) return
+                      setSelRoleId(id)
+                      try {
+                        await usersApi.assignRole(user.id, id)
+                        setSelRoleId('')
+                        onRefresh()
+                      } catch (err: unknown) {
+                        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+                        alert(msg || 'Lỗi khi gán vai trò')
+                        setSelRoleId('')
+                      }
+                    }}
                     className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm
                       focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="">-- Chọn vai trò --</option>
+                    <option value="">-- Chọn vai trò để gán --</option>
                     {availableRoles.map(r => (
                       <option key={r.id} value={r.id}>{r.display_name}</option>
                     ))}
                   </select>
-                  <button onClick={assignRole} disabled={!selRoleId}
-                    className="btn-primary disabled:opacity-50">
-                    <Plus size={15} />
-                  </button>
                 </div>
               )}
             </div>
