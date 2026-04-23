@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Plus, RefreshCw, Eye, ScanLine, UploadCloud, X, Search, Filter,
+  Plus, RefreshCw, Eye, ScanLine, UploadCloud, X, Search, Filter, Trash2,
 } from 'lucide-react'
 import { ocrApi } from '../api/ocr'
 import { docTypeApi } from '../api/documentTypes'
@@ -49,6 +49,9 @@ export default function OCRPage() {
   // ── Pagination ────────────────────────────────────────────────────────────
   const [page,     setPage]     = useState(1)
   const [pageSize, setPageSize] = useState(20)
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   // ── Upload modal ──────────────────────────────────────────────────────────
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -120,6 +123,20 @@ export default function OCRPage() {
   const handleRetry = async (id: number) => {
     await ocrApi.retry(id)
     loadDocs(page, pageSize)
+  }
+
+  const handleDelete = async (doc: Document) => {
+    if (!confirm(`Xoá chứng từ "${doc.file_name}"? Thao tác này không thể hoàn tác.`)) return
+    setDeletingId(doc.id)
+    try {
+      await ocrApi.delete(doc.id)
+      loadDocs(page, pageSize)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Xoá thất bại')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const dtName = (id: number) => docTypes.find(d => d.id === id)?.name ?? String(id)
@@ -243,6 +260,17 @@ export default function OCRPage() {
                               title="Thử lại"
                               className="text-orange-400 hover:text-orange-600 transition-colors">
                               <RefreshCw size={15} />
+                            </button>
+                          )}
+                          {doc.status === 'completed' && (
+                            <button
+                              onClick={() => handleDelete(doc)}
+                              disabled={deletingId === doc.id}
+                              title="Xoá chứng từ"
+                              className="text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors">
+                              {deletingId === doc.id
+                                ? <RefreshCw size={15} className="animate-spin" />
+                                : <Trash2 size={15} />}
                             </button>
                           )}
                         </div>

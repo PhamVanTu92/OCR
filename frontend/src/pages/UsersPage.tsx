@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   Users, Search, X, Shield, Building2,
-  ToggleLeft, ToggleRight, Plus, Trash2, AlertCircle,
+  ToggleLeft, ToggleRight, Trash2, AlertCircle,
   UserPlus, Eye, EyeOff, Loader2, CheckCircle2,
 } from 'lucide-react'
 import { usersApi, type UserCreateData } from '../api/users'
@@ -274,10 +274,24 @@ function UserDrawer({
     usersApi.getOrgs(user.id).then(r => setUserOrgs(r.data)).catch(() => {})
   }, [user.id])
 
-  const saveInfo = async () => {
+  // Lưu tất cả: thông tin cơ bản + vai trò (nếu đang chọn) + đơn vị (nếu đang chọn)
+  const handleSave = async () => {
     setSaving(true); setSaveErr('')
     try {
       await usersApi.update(user.id, { full_name: fullName || undefined, is_active: isActive })
+
+      if (selRoleId) {
+        await usersApi.assignRole(user.id, Number(selRoleId))
+        setSelRoleId('')
+      }
+
+      if (selOrgId) {
+        await usersApi.assignOrg(user.id, { organization_id: Number(selOrgId), role: selOrgRole })
+        const r = await usersApi.getOrgs(user.id)
+        setUserOrgs(r.data)
+        setSelOrgId('')
+      }
+
       onRefresh()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -285,37 +299,11 @@ function UserDrawer({
     } finally { setSaving(false) }
   }
 
-  const assignRole = async () => {
-    if (!selRoleId) return
-    try {
-      await usersApi.assignRole(user.id, Number(selRoleId))
-      setSelRoleId('')
-      onRefresh()
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      alert(msg || 'Lỗi khi gán vai trò')
-    }
-  }
-
   const removeRole = async (roleId: number) => {
     try {
       await usersApi.removeRole(user.id, roleId)
       onRefresh()
     } catch { alert('Lỗi khi thu hồi vai trò') }
-  }
-
-  const assignOrg = async () => {
-    if (!selOrgId) return
-    try {
-      await usersApi.assignOrg(user.id, { organization_id: Number(selOrgId), role: selOrgRole })
-      const r = await usersApi.getOrgs(user.id)
-      setUserOrgs(r.data)
-      setSelOrgId('')
-      onRefresh()
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      alert(msg || 'Lỗi khi phân bổ đơn vị')
-    }
   }
 
   const removeOrg = async (orgId: number) => {
@@ -337,7 +325,7 @@ function UserDrawer({
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b">
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
           <div>
             <div className="font-semibold text-gray-800">{user.full_name || user.username}</div>
             <div className="text-xs text-gray-400">{user.email}</div>
@@ -368,16 +356,6 @@ function UserDrawer({
                   : <ToggleLeft  size={28} className="text-gray-400" />}
               </button>
             </div>
-            {saveErr && (
-              <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{saveErr}</p>
-            )}
-            <button
-              onClick={saveInfo}
-              disabled={saving}
-              className="btn-primary w-full disabled:opacity-50"
-            >
-              {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
-            </button>
           </div>
 
           {/* Tabs */}
@@ -403,7 +381,7 @@ function UserDrawer({
           {tab === 'roles' && (
             <div className="space-y-3">
               <div className="flex flex-wrap gap-2 min-h-[28px]">
-                {user.roles.length === 0 && (
+                {user.roles.length === 0 && !selRoleId && (
                   <span className="text-sm text-gray-400">Chưa có vai trò nào</span>
                 )}
                 {user.roles.map(r => (
@@ -415,25 +393,29 @@ function UserDrawer({
                     </button>
                   </span>
                 ))}
+                {/* Preview vai trò đang chọn (chưa lưu) */}
+                {selRoleId && (() => {
+                  const r = allRoles.find(r => r.id === Number(selRoleId))
+                  return r ? (
+                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
+                      border-2 border-dashed border-indigo-400 ${roleCls(r.color)} opacity-70`}>
+                      {r.display_name} <span className="text-indigo-500 text-[10px]">(chưa lưu)</span>
+                    </span>
+                  ) : null
+                })()}
               </div>
               {availableRoles.length > 0 && (
-                <div className="flex gap-2">
-                  <select
-                    value={selRoleId}
-                    onChange={e => setSelRoleId(Number(e.target.value))}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm
-                      focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">-- Chọn vai trò --</option>
-                    {availableRoles.map(r => (
-                      <option key={r.id} value={r.id}>{r.display_name}</option>
-                    ))}
-                  </select>
-                  <button onClick={assignRole} disabled={!selRoleId}
-                    className="btn-primary disabled:opacity-50">
-                    <Plus size={15} />
-                  </button>
-                </div>
+                <select
+                  value={selRoleId}
+                  onChange={e => setSelRoleId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                    focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Chọn vai trò --</option>
+                  {availableRoles.map(r => (
+                    <option key={r.id} value={r.id}>{r.display_name}</option>
+                  ))}
+                </select>
               )}
             </div>
           )}
@@ -458,12 +440,25 @@ function UserDrawer({
                     </button>
                   </div>
                 ))}
+                {/* Preview đơn vị đang chọn (chưa lưu) */}
+                {selOrgId && (() => {
+                  const o = allOrgs.find(o => o.id === Number(selOrgId))
+                  return o ? (
+                    <div className="flex items-center justify-between p-2.5 rounded-lg
+                      border-2 border-dashed border-indigo-300 bg-indigo-50 opacity-80">
+                      <div>
+                        <div className="text-sm font-medium text-indigo-700">{o.name}</div>
+                        <div className="text-xs text-indigo-400">{o.code} · {selOrgRole} <span className="text-[10px]">(chưa lưu)</span></div>
+                      </div>
+                    </div>
+                  ) : null
+                })()}
               </div>
               {availableOrgs.length > 0 && (
                 <div className="space-y-2 pt-2 border-t border-gray-100">
                   <select
                     value={selOrgId}
-                    onChange={e => setSelOrgId(Number(e.target.value))}
+                    onChange={e => setSelOrgId(e.target.value ? Number(e.target.value) : '')}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
                       focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
@@ -472,26 +467,34 @@ function UserDrawer({
                       <option key={o.id} value={o.id}>{o.name} ({o.code})</option>
                     ))}
                   </select>
-                  <div className="flex gap-2">
-                    <select
-                      value={selOrgRole}
-                      onChange={e => setSelOrgRole(e.target.value)}
-                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm
-                        focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="manager">Quản lý</option>
-                      <option value="member">Thành viên</option>
-                      <option value="viewer">Chỉ xem</option>
-                    </select>
-                    <button onClick={assignOrg} disabled={!selOrgId}
-                      className="btn-primary disabled:opacity-50">
-                      <Plus size={15} />
-                    </button>
-                  </div>
+                  <select
+                    value={selOrgRole}
+                    onChange={e => setSelOrgRole(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="manager">Quản lý</option>
+                    <option value="member">Thành viên</option>
+                    <option value="viewer">Chỉ xem</option>
+                  </select>
                 </div>
               )}
             </div>
           )}
+        </div>
+
+        {/* Footer – nút Lưu thay đổi duy nhất */}
+        <div className="shrink-0 px-6 py-4 border-t bg-gray-50 space-y-2">
+          {saveErr && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{saveErr}</p>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="btn-primary w-full disabled:opacity-50"
+          >
+            {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+          </button>
         </div>
       </div>
     </div>

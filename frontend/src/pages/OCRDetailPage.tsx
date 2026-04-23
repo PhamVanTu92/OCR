@@ -48,6 +48,7 @@ export default function OCRDetailPage() {
   const [confirming,   setConfirming]   = useState(false)
   const [unconfirming, setUnconfirming] = useState(false)
   const [retrying,     setRetrying]     = useState(false)
+  const [deleting,     setDeleting]     = useState(false)
 
   // ── API Sources (auto-fill on load) ──────────────────────────────────────
   const [apiSources,    setApiSources]    = useState<DocTypeApiSource[]>([])
@@ -217,6 +218,20 @@ export default function OCRDetailPage() {
       await ocrApi.retry(doc.id)
       await load(doc.id)
     } finally { setRetrying(false) }
+  }
+
+  // ── Delete (completed only) ───────────────────────────────────────────────────
+  const handleDelete = async () => {
+    if (!doc) return
+    if (!confirm(`Xoá chứng từ "${doc.file_name}"? Thao tác này không thể hoàn tác.`)) return
+    setDeleting(true)
+    try {
+      await ocrApi.delete(doc.id)
+      navigate(-1)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Xoá thất bại')
+    } finally { setDeleting(false) }
   }
 
   // ── Table edit helpers ────────────────────────────────────────────────────────
@@ -474,7 +489,7 @@ export default function OCRDetailPage() {
         style={{ height: 'calc(100vh - 56px)' }}>
         <AlertCircle size={32} />
         <p>{error || 'Không tìm thấy chứng từ'}</p>
-        <button onClick={() => navigate('/ocr')} className="text-sm text-indigo-600 hover:underline">
+        <button onClick={() => navigate(-1)} className="text-sm text-indigo-600 hover:underline">
           ← Quay lại danh sách
         </button>
       </div>
@@ -494,7 +509,7 @@ export default function OCRDetailPage() {
 
       {/* ── Page header ────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 px-5 py-3 bg-white border-b shrink-0">
-        <button onClick={() => navigate('/ocr')}
+        <button onClick={() => navigate(-1)}
           className="text-gray-400 hover:text-gray-700 transition-colors shrink-0">
           <ArrowLeft size={18} />
         </button>
@@ -579,6 +594,15 @@ export default function OCRDetailPage() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600
                 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50">
               <ShieldOff size={13}/> {unconfirming ? '...' : 'Huỷ xác nhận'}
+            </button>
+          )}
+
+          {/* Delete (completed only) */}
+          {doc.status === 'completed' && !editMode && (
+            <button onClick={handleDelete} disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-600
+                border border-red-300 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50">
+              <Trash2 size={13}/> {deleting ? 'Đang xoá...' : 'Xoá'}
             </button>
           )}
 

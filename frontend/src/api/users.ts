@@ -29,7 +29,7 @@ export const usersApi = {
     client.get<{ id: number; name: string; display_name: string; color: string }[]>(`/users/${id}/roles`),
 
   assignRole: (userId: number, roleId: number) =>
-    client.post(`/users/${userId}/roles/`, { role_id: roleId }),
+    client.post(`/users/${userId}/roles`, { role_id: roleId }),
 
   removeRole: (userId: number, roleId: number) =>
     client.delete(`/users/${userId}/roles/${roleId}`),
@@ -40,7 +40,7 @@ export const usersApi = {
     ),
 
   assignOrg: (userId: number, data: { organization_id: number; role?: string; is_primary?: boolean }) =>
-    client.post(`/users/${userId}/organizations/`, data),
+    client.post(`/users/${userId}/organizations`, data),
 
   removeOrg: (userId: number, orgId: number) =>
     client.delete(`/users/${userId}/organizations/${orgId}`),

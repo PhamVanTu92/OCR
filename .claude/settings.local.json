@@ -11,7 +11,10 @@
       "Bash(python -m py_compile app/routers/auth.py app/main.py)",
       "Bash(node -e ':*)",
       "Bash(npx vite:*)",
-      "Bash(cat E:/Project/OCR/scripts/*)"
+      "Bash(cat E:/Project/OCR/scripts/*)",
+      "PowerShell(python -c \"from docx import Document; import openpyxl; print\\('OK'\\)\" 2>&1)",
+      "Bash(python -c ' *)",
+      "PowerShell(cmdkey /list)"
     ]
   }
 }

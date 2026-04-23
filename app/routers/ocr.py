@@ -41,7 +41,25 @@ from app.schemas.document import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ocr", tags=["OCR & Document Processing"])
 
-ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
+# All extensions the system can actually process (union of all supported formats)
+ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".docx", ".xlsx"}
+
+# Map from the display labels stored in doc_type.allowed_formats → file extensions
+_FORMAT_LABEL_TO_EXT: dict[str, set[str]] = {
+    "PDF":  {".pdf"},
+    "JPG":  {".jpg", ".jpeg"},
+    "JPEG": {".jpg", ".jpeg"},
+    "PNG":  {".png"},
+    "WEBP": {".webp"},
+    "DOCX": {".docx"},
+    "XLSX": {".xlsx"},
+}
+
+# Canonical MIME types for extensions (browser may send generic types for office files)
+_EXT_TO_MIME: dict[str, str] = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
 
 # ─── Background processing ───────────────────────────────────────────────────
@@ -140,10 +158,25 @@ async def upload_document(
 
     # ── Validate file ────────────────────────────────────────────────────────
     ext = Path(file.filename or "").suffix.lower()
+
+    # 1) Must be a format the system can process at all
     if ext not in ALLOWED_EXTENSIONS:
         raise BadRequestError(
-            f"Định dạng file không được hỗ trợ. Cho phép: {', '.join(ALLOWED_EXTENSIONS)}"
+            f"Định dạng file không được hỗ trợ. "
+            f"Hệ thống hỗ trợ: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
         )
+
+    # 2) Must match the formats configured for this document type (if specified)
+    dt_formats: list[str] = doc_type.allowed_formats or []
+    if dt_formats:
+        allowed_exts: set[str] = set()
+        for label in dt_formats:
+            allowed_exts |= _FORMAT_LABEL_TO_EXT.get(label.upper(), set())
+        if ext not in allowed_exts:
+            label_list = ", ".join(f".{f.lower()}" for f in dt_formats)
+            raise BadRequestError(
+                f"Loại chứng từ '{doc_type.name}' chỉ chấp nhận: {label_list}"
+            )
 
     content = await file.read()
     if len(content) > settings.MAX_FILE_SIZE:
@@ -166,7 +199,7 @@ async def upload_document(
         file_name=file.filename,
         file_path=file_path,
         file_size=len(content),
-        mime_type=file.content_type,
+        mime_type=_EXT_TO_MIME.get(ext, file.content_type),
         status="pending",
     )
     db.add(doc)
@@ -262,6 +295,51 @@ async def get_document_file(
         media_type=doc.mime_type or "application/octet-stream",
         filename=doc.file_name,
     )
+
+
+@router.delete(
+    "/documents/{doc_id}",
+    status_code=204,
+    summary="Xoá chứng từ (chỉ khi trạng thái chờ xác nhận)",
+)
+async def delete_document(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise NotFoundError("Không tìm thấy chứng từ")
+    if not current_user.is_admin() and doc.organization_id not in current_user.org_ids:
+        raise ForbiddenError("Không có quyền truy cập chứng từ này")
+    if doc.status != "completed":
+        raise BadRequestError(
+            "Chỉ có thể xoá chứng từ ở trạng thái 'Chờ xác nhận'"
+        )
+
+    # Delete physical file (non-fatal if already missing)
+    try:
+        if doc.file_path and os.path.exists(doc.file_path):
+            os.remove(doc.file_path)
+    except OSError as exc:
+        logger.warning("Could not remove file %s: %s", doc.file_path, exc)
+
+    # Delete child records first to avoid FK constraint errors
+    # (DB-level CASCADE is defined but SQLAlchemy ORM may not honour it automatically)
+    from app.models.document import DocumentResult
+    from app.models.integration import IntegrationExportLog
+
+    db.query(IntegrationExportLog).filter(
+        IntegrationExportLog.document_id == doc_id
+    ).delete(synchronize_session=False)
+
+    db.query(DocumentResult).filter(
+        DocumentResult.document_id == doc_id
+    ).delete(synchronize_session=False)
+
+    db.delete(doc)
+    db.commit()
+    logger.info("Document %d deleted by user %s", doc_id, current_user.user.id)
 
 
 @router.patch(

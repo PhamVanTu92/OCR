@@ -90,6 +90,28 @@ class ExternalApiSource(Base):
     updated_at      = Column(Unicode(50),  default=_now, onupdate=_now)
 
 
+class PurchaseInvoiceLinkedSource(Base):
+    """Cấu hình chứng từ liên kết – tra cứu API ngoài theo ngữ cảnh hóa đơn đầu vào"""
+    __tablename__ = "purchase_invoice_linked_sources"
+
+    id              = Column(Integer,      primary_key=True, index=True)
+    name            = Column(Unicode(200), nullable=False)
+    description     = Column(UnicodeText,  nullable=True)
+    base_url        = Column(UnicodeText,  nullable=False)
+    select_fields   = Column(UnicodeText,  nullable=True)    # $select
+    filter_template = Column(UnicodeText,  nullable=True)    # $filter với {placeholder}
+    extra_params    = Column(UnicodeText,  nullable=True)    # extra query params
+    use_sap_auth    = Column(Boolean,      nullable=False, default=True)
+    header_mappings = Column(UnicodeText,  nullable=True)    # JSON [{api_field,label,ocr_field}]
+    lines_key       = Column(Unicode(200), nullable=True)    # key trong response chứa mảng dòng
+    line_mappings   = Column(UnicodeText,  nullable=True)    # JSON [{api_field,label,ocr_field}]
+    display_columns = Column(UnicodeText,  nullable=True)    # JSON [{api_field,label}]
+    is_active       = Column(Boolean,      nullable=False, default=True)
+    config_id       = Column(Integer, ForeignKey("purchase_invoice_configs.id"), nullable=True)
+    created_at      = Column(Unicode(50),  default=_now)
+    updated_at      = Column(Unicode(50),  default=_now, onupdate=_now)
+
+
 class SavedPurchaseInvoice(Base):
     """Bản ghi hóa đơn đầu vào đã được lưu vào CSDL nội bộ"""
     __tablename__ = "purchase_invoice_records"

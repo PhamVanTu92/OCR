@@ -1,5 +1,5 @@
 """
-OCR Intelligent – FastAPI Application Entry Point
+FOXAI NATIVE – FastAPI Application Entry Point
 """
 
 import logging
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OCR Intelligent System",
+    title="FOXAI NATIVE",
     description=(
         "Hệ thống Quản trị & OCR trích xuất dữ liệu chứng từ động\n\n"
         "**Cách dùng Swagger:**\n"

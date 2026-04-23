@@ -3,13 +3,18 @@ import {
   Search, X, Download, Eye,
   AlertCircle, FileText, Receipt, ExternalLink, Loader2,
   BadgeCheck, BadgeX, Building2, User, CalendarRange,
-  Hash, SlidersHorizontal, Zap, ChevronDown, Save, CheckCircle2,
+  Hash, SlidersHorizontal, Zap, ChevronDown, ChevronRight, Save, CheckCircle2,
+  Link2, RefreshCw,
 } from 'lucide-react'
 import { purchaseInvoiceApi, type InvoiceListParams } from '../api/purchaseInvoices'
 import type {
   PurchaseInvoiceItem, PurchaseInvoiceLineItem, ExternalApiSource, SavedInvoice,
+  PurchaseInvoiceLinkedSource,
 } from '../types'
 import Pagination from '../components/Pagination'
+
+const _toStr = (v: unknown): string =>
+  v === null || v === undefined ? '' : String(v)
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 function fmtDate(d?: string | null): string {
@@ -102,10 +107,11 @@ function SapCell({
 
 // ─── Detail drawer ────────────────────────────────────────────────────────────
 export function InvoiceDetailDrawer({
-  invoice, apiSources, savedInvIds, onSaved, onClose, disableAutoFill = false,
+  invoice, apiSources, linkedSources, savedInvIds, onSaved, onClose, disableAutoFill = false,
 }: {
   invoice: PurchaseInvoiceItem
   apiSources: ExternalApiSource[]
+  linkedSources: PurchaseInvoiceLinkedSource[]
   savedInvIds: Set<string>
   onSaved: (inv: SavedInvoice) => void
   onClose: () => void
@@ -295,6 +301,77 @@ export function InvoiceDetailDrawer({
     } finally {
       setAutoFillingSeller(false)
     }
+  }
+
+  // ── Linked sources picker ─────────────────────────────────────────────────────
+  const [lLinkedExpanded,   setLLinkedExpanded]   = useState(false)
+  const [lLinkedSrcExp,     setLLinkedSrcExp]     = useState<Record<number, boolean>>({})
+  const [lLinkedSearching,  setLLinkedSearching]  = useState<Record<number, boolean>>({})
+  const [lLinkedResults,    setLLinkedResults]    = useState<Record<number, Record<string, unknown>[]>>({})
+  const [lLinkedSelected,   setLLinkedSelected]   = useState<Record<number, Record<string, unknown> | null>>({})
+  const [lLinkedApplying,   setLLinkedApplying]   = useState<number | null>(null)
+  const [lShowTargets,      setLShowTargets]      = useState(false)
+  const autoLinkedRef = useRef(false)
+
+  const handleLinkedSearch = async (src: PurchaseInvoiceLinkedSource, silent = false) => {
+    setLLinkedSearching(p => ({ ...p, [src.id]: true }))
+    setLLinkedSelected(p => ({ ...p, [src.id]: null }))
+    try {
+      const r = await purchaseInvoiceApi.invokeLinkedSource(src.id, _headerCtx())
+      setLLinkedResults(p => ({ ...p, [src.id]: r.data.data }))
+      if (r.data.count > 0)
+        setLLinkedSrcExp(p => ({ ...p, [src.id]: true }))
+    } catch (e: unknown) {
+      if (!silent)
+        alert((e as Err)?.response?.data?.detail ?? 'Gọi linked source thất bại')
+    } finally {
+      setLLinkedSearching(p => ({ ...p, [src.id]: false }))
+    }
+  }
+
+  // Auto-search all linked sources when invoice opens
+  useEffect(() => {
+    if (!linkedSources.length || disableAutoFill) return
+    if (autoLinkedRef.current) return
+    autoLinkedRef.current = true
+    setLLinkedExpanded(true)
+    linkedSources.forEach(src => handleLinkedSearch(src, true))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inv.InvID, linkedSources.length])
+
+  const handleLinkedApply = (src: PurchaseInvoiceLinkedSource) => {
+    const row = lLinkedSelected[src.id]
+    if (!row) return
+    setLLinkedApplying(src.id)
+
+    // Apply header mappings → editInvFields
+    if (src.header_mappings.length) {
+      const patch: Partial<PurchaseInvoiceItem> = {}
+      src.header_mappings.forEach(m => {
+        if (m.ocr_field && row[m.api_field] != null)
+          (patch as Record<string, unknown>)[m.ocr_field] = String(row[m.api_field])
+      })
+      setEditInvFields(prev => ({ ...prev, ...patch }))
+    }
+
+    // Apply line mappings → editLines (by index via lines_key)
+    if (src.lines_key && src.line_mappings.length) {
+      const rawLines = row[src.lines_key]
+      if (Array.isArray(rawLines)) {
+        setEditLines(prev => prev.map((line, i) => {
+          if (i >= rawLines.length) return line
+          const apiLine = rawLines[i] as Record<string, unknown>
+          const patch: Partial<PurchaseInvoiceLineItem> = {}
+          src.line_mappings.forEach(m => {
+            if (m.ocr_field && apiLine[m.api_field] != null)
+              (patch as Record<string, unknown>)[m.ocr_field] = String(apiLine[m.api_field])
+          })
+          return { ...line, ...patch }
+        }))
+      }
+    }
+
+    setLLinkedApplying(null)
   }
 
   // ── Save invoice ─────────────────────────────────────────────────────────────
@@ -616,6 +693,290 @@ export function InvoiceDetailDrawer({
               </section>
             )}
 
+            {/* ── Chứng từ liên kết ───────────────────────────────────────── */}
+            {linkedSources.length > 0 && !disableAutoFill && (
+              <section className="border border-indigo-200 rounded-lg overflow-hidden">
+                {/* Section header */}
+                <button
+                  onClick={() => setLLinkedExpanded(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5
+                    bg-indigo-50 hover:bg-indigo-100 transition-colors text-left">
+                  <div className="flex items-center gap-2 text-sm font-medium text-indigo-800">
+                    <Link2 size={14} className="text-indigo-500"/>
+                    Chứng từ liên kết
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {linkedSources.map(src => {
+                      const cnt = lLinkedResults[src.id]?.length
+                      const isLoading = lLinkedSearching[src.id]
+                      return (
+                        <span key={src.id}
+                          className={`text-[11px] px-2 py-0.5 rounded-full font-medium
+                            ${isLoading ? 'bg-gray-100 text-gray-400'
+                              : cnt === undefined ? 'bg-gray-100 text-gray-400'
+                              : cnt > 0 ? 'bg-indigo-100 text-indigo-700'
+                              : 'bg-gray-100 text-gray-400'}`}>
+                          {isLoading
+                            ? <span className="flex items-center gap-1">
+                                <Loader2 size={10} className="animate-spin"/>{src.name}
+                              </span>
+                            : `${src.name}: ${cnt ?? '…'}`}
+                        </span>
+                      )
+                    })}
+                    {lLinkedExpanded
+                      ? <ChevronDown  size={14} className="text-indigo-400"/>
+                      : <ChevronRight size={14} className="text-indigo-400"/>}
+                  </div>
+                </button>
+
+                {lLinkedExpanded && (
+                  <div className="divide-y divide-indigo-100">
+                    {linkedSources.map(src => {
+                      const results   = lLinkedResults[src.id] ?? []
+                      const selected  = lLinkedSelected[src.id] ?? null
+                      const srcLoading = lLinkedSearching[src.id] ?? false
+                      const srcOpen   = lLinkedSrcExp[src.id] ?? false
+                      const dispCols  = src.display_columns.length
+                        ? src.display_columns
+                        : Object.keys(results[0] ?? {})
+                            .filter(k => k !== src.lines_key)
+                            .slice(0, 5)
+                            .map(k => ({ api_field: k, label: k }))
+
+                      return (
+                        <div key={src.id}>
+                          {/* Per-source row */}
+                          <button
+                            onClick={() => setLLinkedSrcExp(p => ({ ...p, [src.id]: !p[src.id] }))}
+                            className="w-full flex items-center justify-between px-4 py-2.5
+                              hover:bg-gray-50 transition-colors text-left">
+                            <div className="flex items-center gap-2 min-w-0">
+                              {srcLoading
+                                ? <Loader2 size={13} className="animate-spin text-indigo-400 shrink-0"/>
+                                : results.length > 0
+                                  ? <CheckCircle2 size={13} className="text-green-500 shrink-0"/>
+                                  : <AlertCircle  size={13} className="text-gray-300 shrink-0"/>}
+                              <span className="text-sm font-medium text-gray-800">{src.name}</span>
+                              {!srcLoading && lLinkedResults[src.id] !== undefined && (
+                                <span className={`text-xs px-1.5 py-0.5 rounded-full
+                                  ${results.length > 0
+                                    ? 'bg-indigo-50 text-indigo-600'
+                                    : 'bg-gray-100 text-gray-400'}`}>
+                                  {results.length} phù hợp
+                                </span>
+                              )}
+                              {src.description && (
+                                <span className="text-xs text-gray-400 truncate hidden sm:block">
+                                  — {src.description}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span role="button"
+                                onClick={e => { e.stopPropagation(); handleLinkedSearch(src) }}
+                                className="text-gray-300 hover:text-indigo-500 transition-colors p-0.5"
+                                title="Tải lại">
+                                <RefreshCw size={12}
+                                  className={srcLoading ? 'animate-spin text-indigo-400' : ''}/>
+                              </span>
+                              {srcOpen
+                                ? <ChevronDown  size={13} className="text-gray-400"/>
+                                : <ChevronRight size={13} className="text-gray-400"/>}
+                            </div>
+                          </button>
+
+                          {/* Results table */}
+                          {srcOpen && (
+                            <div className="px-4 pb-3 space-y-2">
+                              {srcLoading ? (
+                                <div className="flex items-center gap-2 py-4 justify-center text-xs text-gray-400">
+                                  <Loader2 size={13} className="animate-spin"/> Đang tải...
+                                </div>
+                              ) : results.length === 0 ? (
+                                <div className="text-xs text-gray-400 py-4 text-center
+                                  border border-dashed border-gray-200 rounded-lg">
+                                  Không tìm thấy chứng từ phù hợp
+                                </div>
+                              ) : (
+                                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                  <div className="overflow-auto max-h-56">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                                          {dispCols.map(c => (
+                                            <th key={c.api_field}
+                                              className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">
+                                              {c.label}
+                                            </th>
+                                          ))}
+                                          <th className="w-6"/>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {results.map((row, ri) => {
+                                          const isSel = selected === row
+                                          return (
+                                            <tr key={ri}
+                                              onClick={() => setLLinkedSelected(p => ({
+                                                ...p, [src.id]: isSel ? null : row,
+                                              }))}
+                                              className={`cursor-pointer transition-colors
+                                                ${isSel
+                                                  ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300'
+                                                  : 'hover:bg-gray-50'}`}>
+                                              {dispCols.map(c => (
+                                                <td key={c.api_field}
+                                                  className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                                                  {_toStr(row[c.api_field])}
+                                                </td>
+                                              ))}
+                                              <td className="px-2 text-center">
+                                                {isSel && <CheckCircle2 size={12} className="text-indigo-500"/>}
+                                              </td>
+                                            </tr>
+                                          )
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+
+                                  {/* Footer */}
+                                  <div className="flex items-center justify-between px-3 py-2
+                                    border-t border-gray-100 bg-gray-50">
+                                    <span className="text-xs text-gray-400">
+                                      {selected
+                                        ? '✓ Đã chọn — nhấn Áp dụng để điền vào hóa đơn'
+                                        : 'Nhấn vào dòng để chọn chứng từ'}
+                                    </span>
+                                    <button
+                                      onClick={() => handleLinkedApply(src)}
+                                      disabled={!selected || lLinkedApplying === src.id}
+                                      className="shrink-0 flex items-center gap-1.5 px-3 py-1.5
+                                        text-xs text-white bg-indigo-600 rounded-lg
+                                        hover:bg-indigo-700 transition-colors disabled:opacity-40">
+                                      {lLinkedApplying === src.id
+                                        ? <><Loader2 size={11} className="animate-spin"/> Đang áp dụng...</>
+                                        : <><CheckCircle2 size={11}/> Áp dụng</>}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Detail preview of selected row */}
+                              {selected && (() => {
+                                const hdrMaps  = src.header_mappings.filter(m => m.api_field)
+                                const lnMaps   = src.line_mappings.filter(m => m.api_field)
+                                const rawLines = src.lines_key ? selected[src.lines_key] : null
+                                const lines    = Array.isArray(rawLines)
+                                  ? rawLines as Record<string, unknown>[]
+                                  : []
+                                if (!hdrMaps.length && !lnMaps.length) return null
+                                return (
+                                  <div className="border border-indigo-200 rounded-lg overflow-hidden bg-indigo-50/40">
+                                    <div className="px-3 py-2 bg-indigo-50 border-b border-indigo-100
+                                      flex items-center justify-between">
+                                      <span className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wide flex items-center gap-1.5">
+                                        <CheckCircle2 size={11} className="text-indigo-500"/>
+                                        Chi tiết chứng từ đã chọn
+                                      </span>
+                                      <button
+                                        onClick={() => setLShowTargets(v => !v)}
+                                        className={`text-[10px] px-2 py-0.5 rounded border transition-colors
+                                          ${lShowTargets
+                                            ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
+                                            : 'bg-white text-gray-400 border-gray-200 hover:text-indigo-600'}`}>
+                                        {lShowTargets ? '↩ Ẩn cột đích' : '↩ Cột đích'}
+                                      </button>
+                                    </div>
+
+                                    {hdrMaps.length > 0 && (
+                                      <div className="px-3 pt-2.5 pb-1">
+                                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                          Thông tin header
+                                        </p>
+                                        <table className="w-full text-xs">
+                                          <tbody>
+                                            {hdrMaps.map((m, mi) => (
+                                              <tr key={mi} className={mi % 2 === 0 ? 'bg-white/60' : ''}>
+                                                <td className="py-1 pr-2 text-gray-500 whitespace-nowrap w-2/5 font-medium">
+                                                  {m.label || m.api_field}
+                                                </td>
+                                                <td className="py-1 text-gray-800">
+                                                  {selected[m.api_field] != null && selected[m.api_field] !== ''
+                                                    ? _toStr(selected[m.api_field])
+                                                    : <span className="text-gray-300 italic">–</span>}
+                                                </td>
+                                                {lShowTargets && m.ocr_field && (
+                                                  <td className="py-1 pl-2 text-right whitespace-nowrap">
+                                                    <code className="text-[10px] font-mono text-indigo-500 bg-indigo-50 px-1 rounded">
+                                                      → {m.ocr_field}
+                                                    </code>
+                                                  </td>
+                                                )}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+
+                                    {lnMaps.length > 0 && lines.length > 0 && (
+                                      <div className="px-3 pt-2 pb-3">
+                                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                                          Dòng chi tiết ({lines.length} dòng)
+                                        </p>
+                                        <div className="border border-gray-200 rounded overflow-hidden">
+                                          <div className="overflow-auto max-h-40">
+                                            <table className="w-full text-xs">
+                                              <thead>
+                                                <tr className="bg-gray-100 sticky top-0">
+                                                  <th className="px-2 py-1 text-left text-gray-400 font-medium w-6">#</th>
+                                                  {lnMaps.map(m => (
+                                                    <th key={m.api_field}
+                                                      className="px-2 py-1 text-left text-gray-500 font-medium whitespace-nowrap">
+                                                      {m.label || m.api_field}
+                                                      {lShowTargets && m.ocr_field && (
+                                                        <span className="ml-1 text-[9px] font-mono text-indigo-400">
+                                                          →{m.ocr_field}
+                                                        </span>
+                                                      )}
+                                                    </th>
+                                                  ))}
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-gray-100">
+                                                {lines.map((ln, li) => (
+                                                  <tr key={li} className="bg-white">
+                                                    <td className="px-2 py-1 text-gray-400 text-center">{li + 1}</td>
+                                                    {lnMaps.map(m => (
+                                                      <td key={m.api_field} className="px-2 py-1 text-gray-700 whitespace-nowrap">
+                                                        {ln[m.api_field] != null && ln[m.api_field] !== ''
+                                                          ? _toStr(ln[m.api_field])
+                                                          : <span className="text-gray-300 italic">–</span>}
+                                                      </td>
+                                                    ))}
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* KTra */}
             {ktra && (
               <section>
@@ -718,9 +1079,10 @@ export default function PurchaseInvoicesPage() {
   const [selected,  setSelected]  = useState<PurchaseInvoiceItem | null>(null)
   const [showFilter, setShowFilter] = useState(true)
 
-  // API sources + saved invoice IDs (for drawer)
-  const [apiSources,   setApiSources]   = useState<ExternalApiSource[]>([])
-  const [savedInvIds,  setSavedInvIds]  = useState<Set<string>>(new Set())
+  // API sources + linked sources + saved invoice IDs (for drawer)
+  const [apiSources,     setApiSources]     = useState<ExternalApiSource[]>([])
+  const [linkedSources,  setLinkedSources]  = useState<PurchaseInvoiceLinkedSource[]>([])
+  const [savedInvIds,    setSavedInvIds]    = useState<Set<string>>(new Set())
 
   // Phân trang
   const [page,     setPage]     = useState(1)
@@ -747,10 +1109,13 @@ export default function PurchaseInvoicesPage() {
   const [serial,     setSerial]     = useState('')
   const [trangthai,  setTrangthai]  = useState(-1)
 
-  // Load API sources + saved IDs once
+  // Load API sources + linked sources + saved IDs once
   useEffect(() => {
     purchaseInvoiceApi.listApiSources()
       .then(r => setApiSources(r.data))
+      .catch(() => { /* non-critical */ })
+    purchaseInvoiceApi.listLinkedSources()
+      .then(r => setLinkedSources(r.data.filter(s => s.is_active)))
       .catch(() => { /* non-critical */ })
     purchaseInvoiceApi.listSaved()
       .then(r => setSavedInvIds(new Set(r.data.map(s => s.inv_id))))
@@ -1010,6 +1375,7 @@ export default function PurchaseInvoicesPage() {
         <InvoiceDetailDrawer
           invoice={selected}
           apiSources={apiSources}
+          linkedSources={linkedSources}
           savedInvIds={savedInvIds}
           onSaved={saved => setSavedInvIds(prev => new Set([...prev, saved.inv_id]))}
           onClose={() => setSelected(null)}

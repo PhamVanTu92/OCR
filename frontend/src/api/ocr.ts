@@ -45,4 +45,7 @@ export const ocrApi = {
 
   unconfirm: (id: number) =>
     client.post<Document>(`/ocr/documents/${id}/unconfirm`),
+
+  delete: (id: number) =>
+    client.delete(`/ocr/documents/${id}`),
 }
