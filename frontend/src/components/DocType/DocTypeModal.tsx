@@ -476,9 +476,9 @@ export default function DocTypeModal({ open, editData, categories, onClose, onSa
             </div>
           </section>
 
-          {/* ── Prompt AI ────────────────────────────────────────────────── */}
+          {/* ── Yêu cầu đặc thù ──────────────────────────────────────────── */}
           <section>
-            <SectionTitle>Prompt AI</SectionTitle>
+            <SectionTitle>YÊU CẦU ĐẶC THÙ</SectionTitle>
             <textarea
               className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
               rows={3} value={prompt} onChange={e => setPrompt(e.target.value)}

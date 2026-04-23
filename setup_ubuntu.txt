@@ -1,0 +1,11 @@
+sudo rm -rf /opt/ocr
+
+sudo git clone https://github.com/PhamVanTu92/OCR.git /opt/ocr
+
+cd /opt/ocr
+
+cp .env.example .env
+
+sudo nano .env
+
+bash deploy.sh --no-cache

@@ -108,7 +108,7 @@ export default function MainLayout() {
         <div className="flex items-center justify-between px-4 h-14 border-b border-gray-200 shrink-0">
           {!collapsed && (
             <span className="font-bold text-indigo-600 text-sm tracking-wide truncate">
-              OCR INTELLIGENT
+              FOXAI NATIVE
             </span>
           )}
           <button onClick={() => setCollapsed(!collapsed)}
